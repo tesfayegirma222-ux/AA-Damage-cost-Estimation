@@ -3,6 +3,7 @@ import pandas as pd
 import plotly.express as px
 import gspread
 from google.oauth2.service_account import Credentials
+import datetime
 
 # --- 1. ASSET DATA STRUCTURE (UNTOUCHED) ---
 ASSET_CATEGORIES = {
@@ -19,7 +20,45 @@ ASSET_CATEGORIES = {
     "WIM System": ["Weight-In-Motion Sensor", "WIM Controller"]
 }
 
-# --- 2. AUTH & CONNECTION ---
+# --- 2. THEMED HEADER & NAVIGATION ---
+st.set_page_config(page_title="AAE Asset Portal", layout="wide")
+
+# Custom CSS for Blue Header and Styling
+st.markdown("""
+    <style>
+    .main-header {
+        background-color: #1E3A8A;
+        padding: 20px;
+        border-radius: 10px;
+        color: white;
+        text-align: center;
+        margin-bottom: 25px;
+    }
+    .stMetric {
+        background-color: #ffffff;
+        border-left: 5px solid #1E3A8A;
+        padding: 15px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    </style>
+    <div class="main-header">
+        <h1>Addis Ababa-Adama Expressway</h1>
+        <p>Electromechanical Asset Management System</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+# Sidebar Navigation Menu
+with st.sidebar:
+    st.image("https://img.icons8.com/fluency/96/highway.png", width=80)
+    st.title("Navigation")
+    menu = st.radio(
+        "Select Module",
+        ["📊 Dashboard", "🔎 Asset Browser", "📝 Register New Asset", "🛠️ Maintenance Log"]
+    )
+    st.divider()
+    st.info("Authorized Personnel Only")
+
+# --- 3. AUTH & CONNECTION ---
 def init_connection():
     scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     try:
@@ -32,117 +71,90 @@ def init_connection():
         st.error(f"Configuration Error: {e}")
         st.stop()
 
-# --- 3. UI ENHANCEMENTS (SMART CSS) ---
-st.set_page_config(page_title="AAE Asset Portal", layout="wide")
-
-st.markdown("""
-    <style>
-    .main { background-color: #f5f7f9; }
-    .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
-    h1 { color: #1E3A8A; font-family: 'Helvetica Neue', sans-serif; }
-    .status-functional { color: #10B981; font-weight: bold; }
-    .status-nonfunctional { color: #EF4444; font-weight: bold; }
-    </style>
-    """, unsafe_allow_html=True)
-
-# Branding Header
-col_logo, col_title = st.columns([1, 4])
-with col_title:
-    st.title("Addis Ababa-Adama Expressway")
-    st.subheader("Electromechanical Asset Management Portal")
-
-# Load Data
 sh = init_connection()
-# (Automatic Worksheet Check logic remains here...)
+# Access worksheets (Assumes they are named 'Inventory' and 'Maintenance')
 inv_ws = sh.worksheet("Inventory")
 maint_ws = sh.worksheet("Maintenance")
 df_inv = pd.DataFrame(inv_ws.get_all_records())
 df_maint = pd.DataFrame(maint_ws.get_all_records())
 
-# --- 4. NAVIGATION ---
-tabs = st.tabs(["📊 Executive Dashboard", "🔎 Asset Browser", "📝 Register New", "🛠️ Log Maintenance"])
+# --- 4. MODULE LOGIC ---
 
-# --- TAB 1: EXECUTIVE DASHBOARD ---
-with tabs[0]:
+# MODULE 1: DASHBOARD
+if menu == "📊 Dashboard":
     if not df_inv.empty:
-        # Smart KPIs
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Enterprise Value", f"${df_inv['Total Value'].sum():,.0f}")
-        m2.metric("Health Index", f"{(len(df_inv[df_inv['Status']=='Functional'])/len(df_inv))*100:.1f}%")
+        m1.metric("Total Asset Value", f"${df_inv['Total Value'].sum():,.0f}")
+        m2.metric("Operational Health", f"{(len(df_inv[df_inv['Status']=='Functional'])/len(df_inv))*100:.1f}%")
         m3.metric("Critical Failures", len(df_inv[df_inv['Status']=='Non-Functional']))
         m4.metric("Aging Assets", len(df_inv[df_inv['Current Life'] >= df_inv['Expected Life']]))
         
         st.divider()
-        
-        # Visual Analytics
-        c1, c2 = st.columns(2)
-        with c1:
-            fig1 = px.bar(df_inv, x="Category", color="Status", 
-                          title="System Availability Status", barmode="group",
+        col_left, col_right = st.columns(2)
+        with col_left:
+            fig1 = px.bar(df_inv, y="Category", color="Status", orientation='h', 
+                          title="System Condition by Category",
                           color_discrete_map={"Functional": "#10B981", "Non-Functional": "#EF4444"})
             st.plotly_chart(fig1, use_container_width=True)
-        with c2:
-            fig2 = px.scatter(df_inv, x="Current Life", y="Total Value", color="Category", 
-                              size="Quantity", hover_name="Asset Name", title="Asset Value vs. Lifecycle Stage")
+        with col_right:
+            fig2 = px.bar(df_inv, x="Asset Name", y="Current Life", color="Category", 
+                          title="Subsystem Life Distribution (Years)")
             st.plotly_chart(fig2, use_container_width=True)
+            
+        if not df_maint.empty:
+            st.subheader("Root Cause Analysis (Maintenance History)")
+            fig3 = px.pie(df_maint, names='Root Cause', hole=0.4, color_discrete_sequence=px.colors.qualitative.Bold)
+            st.plotly_chart(fig3, use_container_width=True)
     else:
-        st.info("System Ready. No data found in registry.")
+        st.info("No data available. Please register assets.")
 
-# --- TAB 2: ASSET BROWSER (NEW SMART FEATURE) ---
-with tabs[1]:
-    st.subheader("Inventory Explorer")
-    search_query = st.text_input("🔍 Search by Asset Code or Subsystem")
-    
+# MODULE 2: ASSET BROWSER
+elif menu == "🔎 Asset Browser":
+    st.subheader("Search & Export Inventory")
+    search = st.text_input("🔍 Search by Asset Code, Category, or Name")
     if not df_inv.empty:
-        filtered_df = df_inv[df_inv.apply(lambda row: search_query.lower() in str(row).lower(), axis=1)]
+        mask = df_inv.apply(lambda row: search.lower() in str(row).lower(), axis=1)
+        filtered_df = df_inv[mask]
         st.dataframe(filtered_df, use_container_width=True, hide_index=True)
-        
-        # CSV Export
-        csv = filtered_df.to_csv(index=False).encode('utf-8')
-        st.download_button("📥 Download Report (CSV)", data=csv, file_name="AAE_Asset_Report.csv", mime="text/csv")
+        st.download_button("📥 Export CSV", data=filtered_df.to_csv(index=False), file_name="AAE_Inventory.csv")
 
-# --- TAB 3: REGISTER NEW (FIXED DYNAMIC DROP DOWN) ---
-with tabs[2]:
-    st.subheader("Asset Registration")
-    
-    # Selection logic outside form for immediate reactivity
-    cat_select = st.selectbox("System Category", list(ASSET_CATEGORIES.keys()))
-    sub_options = ASSET_CATEGORIES[cat_select]
+# MODULE 3: REGISTER NEW ASSET
+elif menu == "📝 Register New Asset":
+    st.subheader("Asset Registration Registry")
+    # Dynamic logic for subsystems
+    selected_cat = st.selectbox("1. Main Category", list(ASSET_CATEGORIES.keys()))
+    sub_options = ASSET_CATEGORIES[selected_cat]
     
     with st.form("reg_form", clear_on_submit=True):
-        col1, col2 = st.columns(2)
-        sub_select = col1.selectbox("Subsystem", sub_options)
-        asset_code = col2.text_input("Asset ID Code")
+        c1, c2 = st.columns(2)
+        subsystem = c1.selectbox("2. Subsystem", sub_options)
+        code = c2.text_input("Asset Code (Unique ID)")
+        qty = c1.number_input("Quantity", min_value=1)
+        u_cost = c2.number_input("Unit Cost", min_value=0.0)
+        exp_life = c1.number_input("Expected Life (Yrs)", min_value=1)
+        cur_life = c2.number_input("Current Age (Yrs)", min_value=0)
+        unit = c1.selectbox("Unit", ["Nos", "Set", "Units", "Meters"])
+        status = c2.radio("Functionality Status", ["Functional", "Non-Functional"], horizontal=True)
         
-        qty = col1.number_input("Quantity", min_value=1)
-        u_cost = col2.number_input("Unit Cost", min_value=0.0)
-        
-        e_life = col1.number_input("Expected Life (Yrs)", min_value=1)
-        c_life = col2.number_input("Current Age (Yrs)", min_value=0)
-        
-        status = col1.select_slider("Functionality Status", options=["Non-Functional", "Functional"], value="Functional")
-        unit = col2.selectbox("Unit", ["Nos", "Set", "Units", "Meters"])
-        
-        if st.form_submit_button("✅ Register Asset to Expressway Database"):
-            inv_ws.append_row([cat_select, sub_select, asset_code, unit, qty, status, u_cost, qty*u_cost, e_life, c_life])
-            st.success("Asset added successfully.")
+        if st.form_submit_button("Save to Registry"):
+            inv_ws.append_row([selected_cat, subsystem, code, unit, qty, status, u_cost, qty*u_cost, exp_life, cur_life])
+            st.success("Asset added successfully!")
             st.rerun()
 
-# --- TAB 4: MAINTENANCE LOG ---
-with tabs[3]:
-    st.subheader("Maintenance History")
+# MODULE 4: MAINTENANCE LOG
+elif menu == "🛠️ Maintenance Log":
+    st.subheader("Maintenance History Recording")
     if not df_inv.empty:
-        with st.form("m_form", clear_on_submit=True):
-            m_asset = st.selectbox("Asset Code", df_inv["Asset Code"].unique())
+        with st.form("maint_form", clear_on_submit=True):
+            m_code = st.selectbox("Asset Code", df_inv["Asset Code"].unique())
             m_cause = st.selectbox("Root Cause", ["Wear and Tear", "Power Surge", "Lack of Service", "Environmental", "Accidental"])
-            m_desc = st.text_area("Work Description")
+            m_desc = st.text_area("Details of Work")
             m_cost = st.number_input("Repair Cost", min_value=0.0)
-            
-            if st.form_submit_button("🔧 Log Repair Work"):
-                import datetime
-                maint_ws.append_row([m_asset, str(datetime.date.today()), m_cause, m_desc, m_cost])
-                st.success("Maintenance Record Saved.")
+            if st.form_submit_button("Submit Maintenance Record"):
+                maint_ws.append_row([m_code, str(datetime.date.today()), m_cause, m_desc, m_cost])
+                st.success("Record Saved.")
                 st.rerun()
+
 
 
 
