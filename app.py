@@ -5,36 +5,26 @@ from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime
 
 # --- PAGE CONFIG ---
-st.set_page_config(page_title="Asset Damage System", layout="wide")
+st.set_page_config(page_title="Asset Damage System", layout="wide", page_icon="🏗️")
 
 # --- GOOGLE SHEETS CONNECTION ---
 @st.cache_resource
 def connect_gs():
     try:
-        # 1. Access the secrets
-        creds_dict = st.secrets["gcp_service_account"]
-        
-        # 2. Fix the private key format (common issue with \n characters)
-        if "private_key" in creds_dict:
-            creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
-            
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         
-        # 3. Use the dict-based auth
+        # 1. Convert st.secrets to a regular dict (to avoid 'item assignment' error)
+        creds_dict = dict(st.secrets["gcp_service_account"])
+        
+        # 2. Fix private key formatting
+        if "private_key" in creds_dict:
+            creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+        
+        # 3. Authorize
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
         
-        return client.open("Asset_Damage_System")
-    except Exception as e:
-        # This will show the actual detailed error
-        st.error(f"❌ Connection Error: {e}")
-        return None
-        
-        # Pulling from st.secrets (Set this up in Streamlit Cloud Settings)
-        creds_info = st.secrets["gcp_service_account"]
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_info, scope)
-        
-        client = gspread.authorize(creds)
+        # 4. Open the workbook
         return client.open("Asset_Damage_System")
     except Exception as e:
         st.error(f"❌ Connection Error: {e}")
@@ -42,15 +32,20 @@ def connect_gs():
 
 gc = connect_gs()
 
-# Stop execution if connection fails to prevent AttributeError
+# Stop app if connection fails
 if gc is None:
-    st.warning("Please configure your Google Sheets credentials in Streamlit Secrets.")
+    st.info("💡 Please ensure the Service Account email is added as an 'Editor' to your Google Sheet.")
     st.stop()
 
 # --- DATA HELPERS ---
-def get_worksheet_data(sheet_name):
-    ws = gc.worksheet(sheet_name)
-    return pd.DataFrame(ws.get_all_records())
+def get_data(sheet_name):
+    """Fetch data from a specific worksheet as a DataFrame."""
+    try:
+        ws = gc.worksheet(sheet_name)
+        return pd.DataFrame(ws.get_all_records())
+    except Exception as e:
+        st.error(f"Error reading {sheet_name}: {e}")
+        return pd.DataFrame()
 
 # --- AUTHENTICATION ---
 def login():
@@ -59,16 +54,17 @@ def login():
     password = st.sidebar.text_input("Password", type="password")
     
     if st.sidebar.button("Login"):
-        users_df = get_worksheet_data("Users")
-        user_data = users_df[(users_df['Username'] == username) & (users_df['Password'] == str(password))]
-        
-        if not user_data.empty:
-            st.session_state['logged_in'] = True
-            st.session_state['user'] = username
-            st.session_state['role'] = user_data.iloc[0]['Role']
-            st.rerun()
-        else:
-            st.sidebar.error("Invalid credentials")
+        users_df = get_data("Users")
+        if not users_df.empty:
+            user_data = users_df[(users_df['Username'] == username) & (users_df['Password'] == str(password))]
+            
+            if not user_data.empty:
+                st.session_state['logged_in'] = True
+                st.session_state['user'] = username
+                st.session_state['role'] = user_data.iloc[0]['Role']
+                st.rerun()
+            else:
+                st.sidebar.error("Invalid credentials")
 
 # --- APP MODULES ---
 def asset_registry():
@@ -81,12 +77,18 @@ def asset_registry():
         
         if st.form_submit_button("Register Asset"):
             ws = gc.worksheet("AssetRegistry")
+            # ID is set by counting rows
             ws.append_row([len(ws.get_all_values()), name, category, unit, cost])
             st.success(f"Asset '{name}' added successfully!")
 
 def damage_reporting():
     st.header("🚨 Damage Reporting")
-    assets_df = get_worksheet_data("AssetRegistry")
+    assets_df = get_data("AssetRegistry")
+    
+    if assets_df.empty:
+        st.warning("No assets found. Please register assets first.")
+        return
+
     asset_list = assets_df['Asset Name'].tolist()
     
     with st.form("damage_form", clear_on_submit=True):
@@ -99,11 +101,16 @@ def damage_reporting():
         if st.form_submit_button("Submit Report"):
             ws = gc.worksheet("DamageReports")
             ws.append_row([case_no, asset_name, location, gps, str(date), st.session_state['user'], "Pending"])
-            st.success("Report submitted successfully.")
+            st.success(f"Report {case_no} submitted successfully.")
 
 def cost_estimation():
     st.header("💰 Engineering Cost Estimation")
-    reports_df = get_worksheet_data("DamageReports")
+    reports_df = get_data("DamageReports")
+    
+    if reports_df.empty:
+        st.info("No damage reports found.")
+        return
+
     pending_cases = reports_df[reports_df['Status'] == 'Pending']['Case No'].tolist()
     
     if not pending_cases:
@@ -111,29 +118,33 @@ def cost_estimation():
         return
 
     case_select = st.selectbox("Select Case Number to Estimate", pending_cases)
-    qty = st.number_input("Quantity Damaged", min_value=0.1)
+    qty = st.number_input("Quantity Damaged", min_value=0.1, format="%.2f")
     
-    # Auto-fetch Unit Cost
+    # Auto-fetch Unit Cost from Registry
     asset_name = reports_df[reports_df['Case No'] == case_select]['Asset Name'].values[0]
-    registry_df = get_worksheet_data("AssetRegistry")
+    registry_df = get_data("AssetRegistry")
     unit_cost = registry_df[registry_df['Asset Name'] == asset_name]['Unit Cost'].values[0]
     
     subtotal = qty * unit_cost
     vat = subtotal * 0.15
     grand_total = subtotal + vat
     
-    c1, c2 = st.columns(2)
-    c1.metric("Unit Cost", f"${unit_cost:,.2f}")
-    c2.metric("Grand Total (Incl. 15% VAT)", f"${grand_total:,.2f}")
+    col1, col2 = st.columns(2)
+    col1.metric("Unit Cost", f"${unit_cost:,.2f}")
+    col2.metric("Total (Inc. VAT)", f"${grand_total:,.2f}")
 
     if st.button("Finalize and Save Estimation"):
-        ws = gc.worksheet("Estimations")
-        ws.append_row([case_select, qty, subtotal, vat, grand_total, st.session_state['user'], "No"])
-        # Update status in DamageReports
-        reports_ws = gc.worksheet("DamageReports")
-        cell = reports_ws.find(case_select)
-        reports_ws.update_cell(cell.row, 7, "Estimated") # Assuming 'Status' is column 7
-        st.success("Estimation saved and status updated!")
+        # Save to Estimations sheet
+        ws_est = gc.worksheet("Estimations")
+        ws_est.append_row([case_select, qty, subtotal, vat, grand_total, st.session_state['user'], "No"])
+        
+        # Update Status in DamageReports
+        ws_rep = gc.worksheet("DamageReports")
+        cell = ws_rep.find(str(case_select))
+        ws_rep.update_cell(cell.row, 7, "Estimated") # Status is Column 7
+        
+        st.success("Estimation saved and Case Status updated!")
+        st.cache_resource.clear() # Clear cache to refresh data
 
 def admin_panel():
     st.header("👥 User Management")
@@ -143,27 +154,30 @@ def admin_panel():
         new_r = st.selectbox("Role", ["Admin", "Safety", "Engineer", "Manager"])
         if st.button("Create User"):
             gc.worksheet("Users").append_row([new_u, new_p, new_r])
-            st.success("User added.")
+            st.success(f"User {new_u} created.")
     
-    users_df = get_worksheet_data("Users")
-    st.dataframe(users_df)
+    st.subheader("Current Users")
+    st.dataframe(get_data("Users"), use_container_width=True)
 
 # --- MAIN NAVIGATION ---
 if 'logged_in' not in st.session_state:
     login()
 else:
-    st.sidebar.write(f"User: **{st.session_state['user']}** | Role: **{st.session_state['role']}**")
-    task = st.sidebar.radio("Navigation", ["Dashboard", "Asset Registry", "Damage Reporting", "Cost Estimation", "Admin Panel"])
+    st.sidebar.info(f"👤 **{st.session_state['user']}** ({st.session_state['role']})")
+    task = st.sidebar.radio("Go to:", ["Dashboard", "Asset Registry", "Damage Reporting", "Cost Estimation", "Admin Panel"])
     
     if st.sidebar.button("Logout"):
-        for key in list(st.session_state.keys()):
-            del st.session_state[key]
+        st.session_state.clear()
         st.rerun()
 
     if task == "Dashboard":
         st.title("📊 System Overview")
-        df = get_worksheet_data("DamageReports")
-        st.dataframe(df, use_container_width=True)
+        df = get_data("DamageReports")
+        if not df.empty:
+            st.dataframe(df, use_container_width=True)
+        else:
+            st.write("No data available yet.")
+
     elif task == "Asset Registry":
         asset_registry()
     elif task == "Damage Reporting":
@@ -174,7 +188,9 @@ else:
         if st.session_state['role'] == "Admin":
             admin_panel()
         else:
-            st.error("Access Denied.")
+            st.error("Access Denied: Admins Only.")
+            
+
 
 
 
