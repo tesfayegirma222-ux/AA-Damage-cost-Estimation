@@ -33,7 +33,7 @@ def init_connection():
         st.error(f"Configuration Error: {e}")
         st.stop()
 
-# --- 3. UI THEMING ---
+# --- 3. UI THEME & HEADER ---
 st.set_page_config(page_title="AAE Asset Portal", layout="wide")
 
 st.markdown("""
@@ -45,7 +45,6 @@ st.markdown("""
         color: white;
         text-align: center;
         margin-bottom: 25px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
     }
     .stMetric {
         background-color: #ffffff;
@@ -53,6 +52,7 @@ st.markdown("""
         padding: 15px;
         box-shadow: 0 2px 4px rgba(0,0,0,0.05);
     }
+    .status-table { font-size: 0.9rem; }
     </style>
     <div class="main-header">
         <h1>Addis Ababa-Adama Expressway</h1>
@@ -66,15 +66,15 @@ with st.sidebar:
     st.title("Main Menu")
     menu = st.radio("Select Module", ["📊 Dashboard", "🔎 Asset Browser", "📝 Register Asset", "🛠️ Maintenance Log"])
     st.divider()
-    st.info("System: AAE-EMS v2.1")
+    st.info("System: AAE-EMS v2.2")
 
-# --- 4. DATA LOADING & HEADER NORMALIZATION ---
+# --- 4. DATA HANDLING ---
 sh = init_connection()
 inv_ws = sh.worksheet("Inventory")
 maint_ws = sh.worksheet("Maintenance")
 
-# Load data and strip column spaces immediately
 df_inv = pd.DataFrame(inv_ws.get_all_records())
+# Strip whitespace from headers to avoid KeyErrors
 df_inv.columns = [c.strip() for c in df_inv.columns]
 
 df_maint = pd.DataFrame(maint_ws.get_all_records())
@@ -85,45 +85,62 @@ df_maint.columns = [c.strip() for c in df_maint.columns]
 # MODULE: DASHBOARD
 if menu == "📊 Dashboard":
     if not df_inv.empty:
-        # DEFENSIVE DATA CLEANING: Fix types for math
-        numeric_cols = ['Total Value', 'Quantity', 'Current Life', 'Expected Life']
-        for col in numeric_cols:
+        # Pre-process numeric columns
+        num_cols = ['Total Value', 'Quantity', 'Current Life', 'Expected Life']
+        for col in num_cols:
             if col in df_inv.columns:
                 df_inv[col] = pd.to_numeric(df_inv[col], errors='coerce').fillna(0)
         
         # KPI Metrics
         m1, m2, m3, m4 = st.columns(4)
-        
-        # Safe metric calculation
         total_val = df_inv['Total Value'].sum() if 'Total Value' in df_inv.columns else 0
         m1.metric("Enterprise Value", f"${total_val:,.0f}")
         
         health_pct = (len(df_inv[df_inv['Status']=='Functional']) / len(df_inv) * 100) if 'Status' in df_inv.columns else 0
         m2.metric("Operational Health", f"{health_pct:.1f}%")
         
-        non_func = len(df_inv[df_inv['Status']=='Non-Functional']) if 'Status' in df_inv.columns else 0
-        m3.metric("Critical Failures", non_func, delta="- Action Required" if non_func > 0 else None, delta_color="inverse")
+        non_func_count = len(df_inv[df_inv['Status']=='Non-Functional'])
+        m3.metric("Critical Failures", non_func_count, delta="- Action Needed" if non_func_count > 0 else None, delta_color="inverse")
         
-        aging = 0
-        if 'Current Life' in df_inv.columns and 'Expected Life' in df_inv.columns:
-            aging = len(df_inv[df_inv['Current Life'] >= df_inv['Expected Life']])
+        aging = len(df_inv[df_inv['Current Life'] >= df_inv['Expected Life']]) if 'Current Life' in df_inv.columns else 0
         m4.metric("Aging Alerts", aging)
 
         st.divider()
-        col_left, col_right = st.columns(2)
+
+        # --- NEW: ASSET CONDITION SUMMARY TABLE ---
+        st.subheader("📋 System Health & Quantity Summary")
         
-        with col_left:
-            fig1 = px.bar(df_inv, y="Category", color="Status", orientation='h', 
-                          title="Condition by Category",
+        # Aggregate Quantity by Category and Status
+        summary = df_inv.groupby(['Category', 'Status'])['Quantity'].sum().unstack(fill_value=0)
+        
+        # Ensure both status columns exist
+        for s in ['Functional', 'Non-Functional']:
+            if s not in summary.columns: summary[s] = 0
+            
+        summary['Total Qty'] = summary['Functional'] + summary['Non-Functional']
+        summary['Health Score'] = (summary['Functional'] / summary['Total Qty'] * 100).round(1)
+        
+        # Style and display the table
+        st.dataframe(
+            summary.sort_values('Health Score'),
+            use_container_width=True,
+            column_config={
+                "Health Score": st.column_config.ProgressColumn("Health %", format="%.1f%%", min_value=0, max_value=100),
+                "Non-Functional": st.column_config.NumberColumn(help="Needs immediate repair")
+            }
+        )
+
+        st.divider()
+        col_l, col_r = st.columns(2)
+        with col_l:
+            fig1 = px.bar(df_inv, y="Category", color="Status", orientation='h', title="Condition Distribution",
                           color_discrete_map={"Functional": "#10B981", "Non-Functional": "#EF4444"})
             st.plotly_chart(fig1, use_container_width=True)
-            
-        with col_right:
-            fig2 = px.bar(df_inv, x="Asset Name", y="Current Life", color="Category", 
-                          title="Asset Age (Years)")
+        with col_r:
+            fig2 = px.bar(df_inv, x="Asset Name", y="Current Life", color="Category", title="Asset Lifecycle (Years)")
             st.plotly_chart(fig2, use_container_width=True)
     else:
-        st.info("Registry is currently empty.")
+        st.info("No data found in Inventory.")
 
 # MODULE: ASSET BROWSER
 elif menu == "🔎 Asset Browser":
@@ -132,18 +149,17 @@ elif menu == "🔎 Asset Browser":
     if not df_inv.empty:
         mask = df_inv.apply(lambda row: search.lower() in str(row).lower(), axis=1)
         st.dataframe(df_inv[mask], use_container_width=True, hide_index=True)
-        st.download_button("📥 Export CSV", data=df_inv[mask].to_csv(index=False), file_name="AAE_Assets.csv")
 
-# MODULE: REGISTER ASSET
+# MODULE: REGISTER ASSET (DYNAMIC DROWPDOWN)
 elif menu == "📝 Register Asset":
-    st.subheader("Add New Electromechanical Asset")
+    st.subheader("Register New Expressway Asset")
     cat_select = st.selectbox("1. Category", list(ASSET_CATEGORIES.keys()))
     sub_options = ASSET_CATEGORIES[cat_select]
     
     with st.form("reg_form", clear_on_submit=True):
         c1, c2 = st.columns(2)
         sub_select = c1.selectbox("2. Subsystem", sub_options)
-        asset_code = c2.text_input("Asset ID")
+        asset_code = c2.text_input("Asset Code")
         qty = c1.number_input("Quantity", min_value=1)
         u_cost = c2.number_input("Unit Cost", min_value=0.0)
         status = c1.radio("Status", ["Functional", "Non-Functional"], horizontal=True)
@@ -153,7 +169,7 @@ elif menu == "📝 Register Asset":
         
         if st.form_submit_button("✅ Save Asset"):
             inv_ws.append_row([cat_select, sub_select, asset_code, unit, qty, status, u_cost, qty*u_cost, e_life, c_life])
-            st.success("Asset recorded.")
+            st.success("Asset added to registry.")
             st.rerun()
 
 # MODULE: MAINTENANCE LOG
@@ -167,8 +183,9 @@ elif menu == "🛠️ Maintenance Log":
             m_cost = st.number_input("Repair Cost", min_value=0.0)
             if st.form_submit_button("💾 Save Record"):
                 maint_ws.append_row([m_code, str(datetime.date.today()), m_cause, m_desc, m_cost])
-                st.success("Maintenance log saved.")
-                st.rerun()
+                st.success("Log saved.")
+                st.rerun()rerun()
+
 
 
 
