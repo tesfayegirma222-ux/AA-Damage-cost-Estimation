@@ -98,34 +98,42 @@ with tab1:
     else:
         st.info("Inventory is empty.")
 
-# --- TAB 2: REGISTER ASSET (DYNAMIC FIX) ---
+# --- TAB 2: REGISTER ASSET (FIXED DYNAMIC FILTERING) ---
 with tab2:
-    st.header("New Asset Registration")
+    st.header("Asset Registration Form")
     
-    # Category MUST be outside the form to trigger dynamic subsystem updates
-    selected_cat = st.selectbox("1. Select Category", list(ASSET_CATEGORIES.keys()))
-    available_subs = ASSET_CATEGORIES[selected_cat]
+    # STEP 1: Main Category (OUTSIDE the form for reactivity)
+    category_list = list(ASSET_CATEGORIES.keys())
+    selected_cat = st.selectbox("1. Select Main System Category", category_list)
+
+    # STEP 2: Filter the subsystems based on the selection above
+    available_subsystems = ASSET_CATEGORIES[selected_cat]
     
-    # Subsystem and other details inside the form
-    with st.form("reg_form", clear_on_submit=True):
+    # STEP 3: The Form (For all other data)
+    with st.form("registry_form", clear_on_submit=True):
         col_a, col_b = st.columns(2)
         
-        subsystem = col_a.selectbox("2. Select Subsystem", available_subs)
-        asset_code = col_b.text_input("Asset Code (Unique)")
+        # This dropdown now only contains subsystems for the chosen category
+        subsystem = col_a.selectbox("2. Select Asset Subsystem", available_subsystems)
         
-        unit = col_a.selectbox("Unit", ["Nos", "Set", "Meters"])
-        qty = col_b.number_input("Quantity", min_value=1)
+        asset_code = col_b.text_input("Asset Code (e.g., GEN-001)")
+        unit = col_a.selectbox("Unit", ["Nos", "Set", "Units", "Meters"])
+        qty = col_b.number_input("Total Quantity", min_value=1, step=1)
         
         u_cost = col_a.number_input("Unit Cost", min_value=0.0)
-        exp_life = col_b.number_input("Expected Life (Yrs)", min_value=1)
+        exp_life = col_b.number_input("Expected Service Life (Years)", min_value=1)
         
-        cur_life = col_a.number_input("Current Life (Yrs)", min_value=0)
+        cur_life = col_a.number_input("Current Asset Life (Years)", min_value=0)
         status = col_b.radio("Status", ["Functional", "Non-Functional"], horizontal=True)
         
-        if st.form_submit_button("Save Asset"):
-            inv_ws.append_row([selected_cat, subsystem, asset_code, unit, qty, 
-                               status, u_cost, qty*u_cost, exp_life, cur_life])
-            st.success("Asset added!")
+        # Submit Button
+        if st.form_submit_button("Save to Google Sheets"):
+            total_val = qty * u_cost
+            inv_ws.append_row([
+                selected_cat, subsystem, asset_code, unit, 
+                qty, status, u_cost, total_val, exp_life, cur_life
+            ])
+            st.success(f"Asset {asset_code} saved under {selected_cat} > {subsystem}")
             st.rerun()
 
 # --- TAB 3: MAINTENANCE LOG ---
@@ -143,6 +151,7 @@ with tab3:
                 maint_ws.append_row([m_code, str(m_date), m_cause, m_detail, m_cost])
                 st.success("Logged.")
                 st.rerun()
+
 
 
 
