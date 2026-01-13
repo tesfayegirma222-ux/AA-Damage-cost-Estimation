@@ -1,31 +1,32 @@
 import streamlit as st
 import pandas as pd
 import gspread
-from google.oauth2.service_account import Credentials # New library
+from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime
 
 # --- 1. SECURE CONNECTION LOGIC ---
 def connect_gs():
     try:
-        # Define the required scopes
+        # Define the required scopes for Sheets and Drive
         scope = [
             "https://www.googleapis.com/auth/spreadsheets",
             "https://www.googleapis.com/auth/drive"
         ]
         
-        # Pull from Streamlit Cloud Secrets
+        # This matches the [gcp_service_account] header in your Streamlit Secrets
         if "gcp_service_account" in st.secrets:
+            # Convert Secrets to a standard dictionary to prevent parsing errors
             creds_info = dict(st.secrets["gcp_service_account"])
             
-            # Clean the private key to handle newline issues
+            # CRITICAL: Fix formatting of the private key (handles \n markers)
             if "private_key" in creds_info:
                 creds_info["private_key"] = creds_info["private_key"].replace("\\n", "\n")
             
-            # Use the modern Google Auth library
-            creds = Credentials.from_service_account_info(creds_info, scopes=scope)
+            # Authenticate using the dictionary
+            creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_info, scope)
             client = gspread.authorize(creds)
             
-            # Open the sheet
+            # OPEN THE SHEET (Ensure the name matches EXACTLY)
             return client.open("Asset_Damage_System")
         else:
             return "MISSING_SECRETS"
@@ -35,14 +36,17 @@ def connect_gs():
 # Initialize global connection
 gc_result = connect_gs()
 
+# Halt the app with clear instructions if connection fails
 if gc_result == "MISSING_SECRETS":
     st.error("⚠️ Secrets key '[gcp_service_account]' not found in Settings.")
+    st.info("Please follow the TOML formatting guide below to add your credentials.")
     st.stop()
 elif isinstance(gc_result, str):
     st.error(f"❌ Connection Error: {gc_result}")
+    st.info("Ensure you have shared your Google Sheet with the Service Account email.")
     st.stop()
 else:
-    gc = gc_result
+    gc = gc_result # Connection is live
 
 # --- 2. DATA UTILITY ---
 def get_data(worksheet_name):
@@ -66,15 +70,18 @@ if 'logged_in' not in st.session_state:
             else:
                 st.error("Invalid Username or Password")
 else:
+    # Sidebar Navigation
     st.sidebar.title(f"User: {st.session_state.user}")
+    st.sidebar.write(f"Role: {st.session_state.role}")
     choice = st.sidebar.radio("Navigation", ["Dashboard", "Asset Registry", "Damage Reporting", "Cost Estimation"])
 
     if st.sidebar.button("Logout"):
         del st.session_state.logged_in
         st.rerun()
 
+    # --- MODULES ---
     if choice == "Dashboard":
-        st.header("📊 Incident Dashboard")
+        st.header("📊 Operational Summary")
         st.dataframe(get_data("DamageReports"), use_container_width=True)
 
     elif choice == "Asset Registry":
@@ -114,6 +121,7 @@ else:
             case = st.selectbox("Select Case", pending['Case No'].tolist())
             qty = st.number_input("Quantity Damaged", min_value=0.1)
             
+            # Automated Formula
             asset_name = reports[reports['Case No'] == case]['Asset Name'].values[0]
             reg = get_data("AssetRegistry")
             u_cost = reg[reg['Asset Name'] == asset_name]['Unit Cost'].values[0]
@@ -128,9 +136,10 @@ else:
                 gc.worksheet("Estimations").append_row([case, qty, total, vat, grand, st.session_state.user])
                 ws = gc.worksheet("DamageReports")
                 cell = ws.find(case)
-                ws.update_cell(cell.row, 6, "Estimated")
+                ws.update_cell(cell.row, 6, "Estimated") # Updates Status
                 st.success("Estimation Finalized!")
                 st.rerun()
+
 
 
 
