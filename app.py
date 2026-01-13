@@ -52,7 +52,6 @@ st.markdown("""
         padding: 15px;
         box-shadow: 0 2px 4px rgba(0,0,0,0.05);
     }
-    .status-table { font-size: 0.9rem; }
     </style>
     <div class="main-header">
         <h1>Addis Ababa-Adama Expressway</h1>
@@ -66,7 +65,7 @@ with st.sidebar:
     st.title("Main Menu")
     menu = st.radio("Select Module", ["📊 Dashboard", "🔎 Asset Browser", "📝 Register Asset", "🛠️ Maintenance Log"])
     st.divider()
-    st.info("System: AAE-EMS v2.2")
+    st.info("System: AAE-EMS v2.3")
 
 # --- 4. DATA HANDLING ---
 sh = init_connection()
@@ -74,7 +73,6 @@ inv_ws = sh.worksheet("Inventory")
 maint_ws = sh.worksheet("Maintenance")
 
 df_inv = pd.DataFrame(inv_ws.get_all_records())
-# Strip whitespace from headers to avoid KeyErrors
 df_inv.columns = [c.strip() for c in df_inv.columns]
 
 df_maint = pd.DataFrame(maint_ws.get_all_records())
@@ -107,26 +105,20 @@ if menu == "📊 Dashboard":
 
         st.divider()
 
-        # --- NEW: ASSET CONDITION SUMMARY TABLE ---
+        # ASSET CONDITION SUMMARY TABLE
         st.subheader("📋 System Health & Quantity Summary")
-        
-        # Aggregate Quantity by Category and Status
         summary = df_inv.groupby(['Category', 'Status'])['Quantity'].sum().unstack(fill_value=0)
-        
-        # Ensure both status columns exist
         for s in ['Functional', 'Non-Functional']:
             if s not in summary.columns: summary[s] = 0
             
         summary['Total Qty'] = summary['Functional'] + summary['Non-Functional']
         summary['Health Score'] = (summary['Functional'] / summary['Total Qty'] * 100).round(1)
         
-        # Style and display the table
         st.dataframe(
             summary.sort_values('Health Score'),
             use_container_width=True,
             column_config={
-                "Health Score": st.column_config.ProgressColumn("Health %", format="%.1f%%", min_value=0, max_value=100),
-                "Non-Functional": st.column_config.NumberColumn(help="Needs immediate repair")
+                "Health Score": st.column_config.ProgressColumn("Health %", format="%.1f%%", min_value=0, max_value=100)
             }
         )
 
@@ -150,7 +142,7 @@ elif menu == "🔎 Asset Browser":
         mask = df_inv.apply(lambda row: search.lower() in str(row).lower(), axis=1)
         st.dataframe(df_inv[mask], use_container_width=True, hide_index=True)
 
-# MODULE: REGISTER ASSET (DYNAMIC DROWPDOWN)
+# MODULE: REGISTER ASSET
 elif menu == "📝 Register Asset":
     st.subheader("Register New Expressway Asset")
     cat_select = st.selectbox("1. Category", list(ASSET_CATEGORIES.keys()))
@@ -170,7 +162,7 @@ elif menu == "📝 Register Asset":
         if st.form_submit_button("✅ Save Asset"):
             inv_ws.append_row([cat_select, sub_select, asset_code, unit, qty, status, u_cost, qty*u_cost, e_life, c_life])
             st.success("Asset added to registry.")
-            st.rerun()
+            st.rerun()  # Fixed line
 
 # MODULE: MAINTENANCE LOG
 elif menu == "🛠️ Maintenance Log":
@@ -184,7 +176,8 @@ elif menu == "🛠️ Maintenance Log":
             if st.form_submit_button("💾 Save Record"):
                 maint_ws.append_row([m_code, str(datetime.date.today()), m_cause, m_desc, m_cost])
                 st.success("Log saved.")
-                st.rerun()rerun()
+                st.rerun()  # Fixed line
+
 
 
 
