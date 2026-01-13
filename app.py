@@ -3,147 +3,164 @@ import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime
+import os
 
-# --- GOOGLE SHEETS CONNECTION ---
+# --- PAGE CONFIGURATION ---
+st.set_page_config(page_title="Asset Damage System", layout="wide")
+
+# --- CLOUD CONNECTION ---
 def connect_gs():
-    try:
-        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        # Streamlit handles secrets better via st.secrets, but we'll use your json for now
-        creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
-        client = gspread.authorize(creds)
-        return client.open("Asset_Damage_System")
-    except Exception as e:
-        st.error(f"Connection Error: {e}")
+    if not os.path.exists("credentials.json"):
+        st.error("Missing 'credentials.json' file.")
         return None
-
-gc = connect_gs()
-
-# --- AUTHENTICATION LOGIC ---
-def login():
-    st.sidebar.title("🔐 Login")
-    username = st.sidebar.text_input("Username")
-    password = st.sidebar.text_input("Password", type="password")
     
-    if st.sidebar.button("Login"):
-        user_sheet = gc.worksheet("Users")
-        users_df = pd.DataFrame(user_sheet.get_all_records())
-        
-        user_data = users_df[(users_df['Username'] == username) & (users_df['Password'] == str(password))]
-        
-        if not user_data.empty:
-            st.session_state['logged_in'] = True
-            st.session_state['user'] = username
-            st.session_state['role'] = user_data.iloc[0]['Role']
-            st.rerun()
-        else:
-            st.sidebar.error("Invalid credentials")
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
+    client = gspread.authorize(creds)
+    return client.open("Asset_Damage_System")
 
-# --- APP MODULES ---
-def asset_registry():
-    st.header("🏗️ Asset Registration")
-    with st.form("asset_form"):
-        name = st.text_input("Asset Name")
-        category = st.selectbox("Category", ["Roadside", "Pavement", "Signage", "Lighting"])
-        unit = st.text_input("Unit (e.g., Meter, Piece)")
-        cost = st.number_input("Standard Unit Cost", min_value=0.0)
-        
-        if st.form_submit_button("Register Asset"):
-            ws = gc.worksheet("AssetRegistry")
-            ws.append_row([len(ws.get_all_values()), name, category, unit, cost])
-            st.success(f"Asset '{name}' added successfully!")
+try:
+    gc = connect_gs()
+except Exception as e:
+    st.error(f"Failed to connect to Google Sheets: {e}")
+    st.stop()
 
-def damage_reporting():
-    st.header("🚨 Damage Reporting")
-    # Fetch asset names for the dropdown
-    asset_ws = gc.worksheet("AssetRegistry")
-    assets = pd.DataFrame(asset_ws.get_all_records())['Asset Name'].tolist()
+# --- HELPER FUNCTIONS ---
+def get_df(sheet_name):
+    ws = gc.worksheet(sheet_name)
+    return pd.DataFrame(ws.get_all_records())
+
+# --- MODULE 1: ASSET REGISTRY ---
+def asset_registry_module():
+    st.subheader("📋 Road Asset Inventory")
     
-    with st.form("damage_form"):
-        case_no = st.text_input("Case Number (Reference)")
-        asset_name = st.selectbox("Select Damaged Asset", assets)
-        location = st.text_input("Location Details")
+    with st.expander("➕ Add New Asset Type"):
+        with st.form("new_asset"):
+            col1, col2 = st.columns(2)
+            name = col1.text_input("Asset Name")
+            cat = col1.selectbox("Category", ["Safety", "Civil", "Electrical", "Signage"])
+            unit = col2.selectbox("Unit", ["Meter", "Set", "Piece", "Sq Meter"])
+            cost = col2.number_input("Standard Unit Cost", min_value=0.0)
+            
+            if st.form_submit_button("Save Asset"):
+                ws = gc.worksheet("AssetRegistry")
+                ws.append_row([len(ws.get_all_values()), name, cat, unit, cost])
+                st.success("Asset added to registry.")
+                st.rerun()
+
+    df = get_df("AssetRegistry")
+    st.dataframe(df, use_container_width=True)
+
+# --- MODULE 2: DAMAGE REPORTING ---
+def damage_reporting_module():
+    st.subheader("🚨 Incident Reporting (Safety Management)")
+    
+    assets_df = get_df("AssetRegistry")
+    asset_list = assets_df['Asset Name'].tolist()
+
+    with st.form("damage_report"):
+        case_no = st.text_input("Case Number")
+        selected_asset = st.selectbox("Damaged Asset", asset_list)
+        location = st.text_input("Location / KM Reference")
         gps = st.text_input("GPS Coordinates")
-        date = st.date_input("Date of Incident")
+        desc = st.text_area("Description of Damage")
         
-        if st.form_submit_button("Submit Report"):
+        if st.form_submit_button("Submit Incident Report"):
             ws = gc.worksheet("DamageReports")
-            ws.append_row([case_no, asset_name, location, gps, str(date), st.session_state['user'], "Pending"])
-            st.success("Report submitted to Road Asset Management.")
+            ws.append_row([case_no, selected_asset, location, gps, desc, 
+                           datetime.now().strftime("%Y-%m-%d %H:%M"), 
+                           st.session_state['user'], "Pending"])
+            st.success("Report Submitted to Asset Manager")
 
-def cost_estimation():
-    st.header("💰 Engineering Cost Estimation")
-    # Get pending reports
-    reports_ws = gc.worksheet("DamageReports")
-    reports_df = pd.DataFrame(reports_ws.get_all_records())
-    pending_cases = reports_df[reports_df['Status'] == 'Pending']['Case No'].tolist()
+# --- MODULE 3: COST ESTIMATION ---
+def cost_estimation_module():
+    st.subheader("💰 Engineering Cost Estimation")
     
-    if not pending_cases:
-        st.info("No pending damage reports to estimate.")
+    reports_df = get_df("DamageReports")
+    pending_reports = reports_df[reports_df['Status'] == 'Pending']
+    
+    if pending_reports.empty:
+        st.info("No pending damage reports requiring estimation.")
         return
 
-    case_select = st.selectbox("Select Case Number", pending_cases)
-    qty = st.number_input("Quantity Damaged", min_value=0.1)
+    case_no = st.selectbox("Select Pending Case", pending_reports['Case No'].tolist())
     
-    # Auto-fetch Unit Cost from Registry
-    asset_name = reports_df[reports_df['Case No'] == case_select]['Asset Name'].values[0]
-    registry_df = pd.DataFrame(gc.worksheet("AssetRegistry").get_all_records())
-    unit_cost = registry_df[registry_df['Asset Name'] == asset_name]['Unit Cost'].values[0]
-    
-    st.write(f"**Asset:** {asset_name} | **Standard Unit Cost:** ${unit_cost}")
-    
-    # Logic: Subtotal = Qty * Cost
-    subtotal = qty * unit_cost
-    vat = subtotal * 0.15
-    grand_total = subtotal + vat
-    
-    st.metric("Estimated Grand Total (Incl. 15% VAT)", f"${grand_total:,.2f}")
+    # Auto-fetch Asset Data
+    asset_name = pending_reports[pending_reports['Case No'] == case_no]['Asset Name'].values[0]
+    assets_df = get_df("AssetRegistry")
+    unit_cost = assets_df[assets_df['Asset Name'] == asset_name]['Unit Cost'].values[0]
+    unit_type = assets_df[assets_df['Asset Name'] == asset_name]['Unit'].values[0]
 
-    if st.button("Finalize and Send for Approval"):
-        ws = gc.worksheet("Estimations")
-        ws.append_row([case_select, qty, subtotal, vat, grand_total, st.session_state['user'], "No"])
-        st.success("Estimation saved and synced to Cloud.")
+    st.info(f"Asset: **{asset_name}** | Standard Cost: **${unit_cost}** per {unit_type}")
 
-# --- ADMIN USER MANAGEMENT ---
-def admin_panel():
-    st.header("👥 User Management")
-    with st.expander("Add New User"):
-        new_u = st.text_input("New Username")
-        new_p = st.text_input("New Password")
-        new_r = st.selectbox("Role", ["Admin", "Safety", "Engineer", "Manager"])
-        if st.button("Create User"):
-            gc.worksheet("Users").append_row([new_u, new_p, new_r])
-            st.success("User added.")
-    
-    st.subheader("Current Users")
-    users_df = pd.DataFrame(gc.worksheet("Users").get_all_records())
-    st.dataframe(users_df)
+    with st.form("estimation_form"):
+        qty = st.number_input(f"Quantity Damaged ({unit_type})", min_value=0.0)
+        engineer = st.text_input("Engineer Name", value=st.session_state['user'])
+        
+        # Calculation Logic
+        total_base = qty * unit_cost
+        vat = total_base * 0.15
+        grand_total = total_base + vat
+        
+        if st.form_submit_button("Calculate & Submit"):
+            # 1. Add to Estimation Sheet
+            est_ws = gc.worksheet("Estimations")
+            est_ws.append_row([case_no, qty, total_base, vat, grand_total, engineer, datetime.now().strftime("%Y-%m-%d")])
+            
+            # 2. Update Status in DamageReports
+            reports_ws = gc.worksheet("DamageReports")
+            cell = reports_ws.find(case_no)
+            reports_ws.update_cell(cell.row, 8, "Estimated") # Column 8 is 'Status'
+            
+            st.success(f"Estimation Complete! Grand Total: ${grand_total:,.2f}")
+            st.rerun()
 
-# --- MAIN NAVIGATION ---
+# --- LOGIN SYSTEM ---
 if 'logged_in' not in st.session_state:
-    login()
+    st.title("Road Asset Damage System")
+    with st.form("login_form"):
+        u = st.text_input("Username")
+        p = st.text_input("Password", type="password")
+        if st.form_submit_button("Login"):
+            user_df = get_df("Users")
+            match = user_df[(user_df['Username'] == u) & (user_df['Password'] == str(p))]
+            if not match.empty:
+                st.session_state['logged_in'] = True
+                st.session_state['user'] = u
+                st.session_state['role'] = match.iloc[0]['Role']
+                st.rerun()
+            else:
+                st.error("Invalid credentials")
 else:
-    st.sidebar.write(f"Logged in as: **{st.session_state['user']}**")
-    task = st.sidebar.radio("Navigation", ["Dashboard", "Asset Registry", "Damage Reporting", "Cost Estimation", "Admin Panel"])
+    # --- SIDEBAR NAVIGATION ---
+    st.sidebar.title(f"Welcome, {st.session_state['user']}")
+    st.sidebar.write(f"Role: **{st.session_state['role']}**")
+    
+    menu = ["Dashboard", "Asset Registry", "Damage Reporting", "Cost Estimation"]
+    if st.session_state['role'] == "Admin":
+        menu.append("User Management")
+    
+    choice = st.sidebar.radio("Go to", menu)
     
     if st.sidebar.button("Logout"):
         del st.session_state['logged_in']
         st.rerun()
 
-    if task == "Dashboard":
-        st.title("📊 System Overview")
-        # Load and show damage reports using Pandas
-        df = pd.DataFrame(gc.worksheet("DamageReports").get_all_records())
-        st.write("Recent Damage Incidents")
+    # --- ROUTING ---
+    if choice == "Dashboard":
+        st.title("📊 Operational Dashboard")
+        df = get_df("DamageReports")
         st.dataframe(df, use_container_width=True)
-
-    elif task == "Asset Registry":
-        asset_registry()
-    elif task == "Damage Reporting":
-        damage_reporting()
-    elif task == "Cost Estimation":
-        cost_estimation()
-    elif task == "Admin Panel":
-        if st.session_state['role'] == "Admin":
-            admin_panel()
-        else:
-            st.error("Access Denied.")
+        
+    elif choice == "Asset Registry":
+        asset_registry_module()
+        
+    elif choice == "Damage Reporting":
+        damage_reporting_module()
+        
+    elif choice == "Cost Estimation":
+        cost_estimation_module()
+        
+    elif choice == "User Management":
+        st.subheader("👥 System Users")
+        st.dataframe(get_df("Users"))
