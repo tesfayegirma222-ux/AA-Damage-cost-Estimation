@@ -11,7 +11,24 @@ st.set_page_config(page_title="Asset Damage System", layout="wide")
 @st.cache_resource
 def connect_gs():
     try:
+        # 1. Access the secrets
+        creds_dict = st.secrets["gcp_service_account"]
+        
+        # 2. Fix the private key format (common issue with \n characters)
+        if "private_key" in creds_dict:
+            creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+            
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        
+        # 3. Use the dict-based auth
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        client = gspread.authorize(creds)
+        
+        return client.open("Asset_Damage_System")
+    except Exception as e:
+        # This will show the actual detailed error
+        st.error(f"❌ Connection Error: {e}")
+        return None
         
         # Pulling from st.secrets (Set this up in Streamlit Cloud Settings)
         creds_info = st.secrets["gcp_service_account"]
@@ -158,6 +175,7 @@ else:
             admin_panel()
         else:
             st.error("Access Denied.")
+
 
 
 
