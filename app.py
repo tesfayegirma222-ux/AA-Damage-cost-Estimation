@@ -1,195 +1,110 @@
 import streamlit as st
 import pandas as pd
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
-from datetime import datetime
+import plotly.express as px
+from gspread_pandas import Spread, Conf
 
-# --- PAGE CONFIG ---
-st.set_page_config(page_title="Asset Damage System", layout="wide", page_icon="🏗️")
+# --- CONFIGURATION & ASSET STRUCTURE ---
+ASSET_CATEGORIES = {
+    "Electric Power Source": ["Electric Utility", "Generator"],
+    "Electric Power Distribution": ["ATS", "Breakers", "Power Cable", "Main Breakers", "DP"],
+    "UPS System": ["UPS", "UPS Battery"],
+    "CCTV System": ["Lane Camera", "Booth Camera", "Road Camera", "Plaza Camera"],
+    "Auto-Railing System": ["Barrier Gate", "Controller"],
+    "HVAC System": ["Air Conditioning System"],
+    "Illumination System": ["High Mast Light", "Compound Light", "Road Light", "Booth Light", "Plaza Light"],
+    "Electronic Display System": ["Canopy Light", "VMS", "LED Notice Board", "Fog Light", "Money Fee Display", "Passage Signal Lamp"],
+    "Pump System": ["Surface Water Pump", "Submersible Pump"],
+    "WIM System": ["Weight-In-Motion Sensor", "WIM Controller"]
+}
 
 # --- GOOGLE SHEETS CONNECTION ---
-@st.cache_resource
-def connect_gs():
-    try:
-        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        
-        # 1. Convert st.secrets to a regular dict (to avoid 'item assignment' error)
-        creds_dict = dict(st.secrets["gcp_service_account"])
-        
-        # 2. Fix private key formatting
-        if "private_key" in creds_dict:
-            creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
-        
-        # 3. Authorize
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-        client = gspread.authorize(creds)
-        
-        # 4. Open the workbook
-        return client.open("Asset_Damage_System")
-    except Exception as e:
-        st.error(f"❌ Connection Error: {e}")
-        return None
-
-gc = connect_gs()
-
-# Stop app if connection fails
-if gc is None:
-    st.info("💡 Please ensure the Service Account email is added as an 'Editor' to your Google Sheet.")
-    st.stop()
-
-# --- DATA HELPERS ---
-def get_data(sheet_name):
-    """Fetch data from a specific worksheet as a DataFrame."""
-    try:
-        ws = gc.worksheet(sheet_name)
-        return pd.DataFrame(ws.get_all_records())
-    except Exception as e:
-        st.error(f"Error reading {sheet_name}: {e}")
-        return pd.DataFrame()
-
-# --- AUTHENTICATION ---
-def login():
-    st.sidebar.title("🔐 Login")
-    username = st.sidebar.text_input("Username")
-    password = st.sidebar.text_input("Password", type="password")
+# Note: In a real app, use st.secrets for credentials
+def load_data():
+    # Replace with your actual Spreadsheet ID or Name
+    # spread = Spread("Your_Spreadsheet_Name")
+    # inventory_df = spread.sheet_to_df(index=0, sheet='Inventory')
+    # maint_df = spread.sheet_to_df(index=0, sheet='Maintenance')
     
-    if st.sidebar.button("Login"):
-        users_df = get_data("Users")
-        if not users_df.empty:
-            user_data = users_df[(users_df['Username'] == username) & (users_df['Password'] == str(password))]
-            
-            if not user_data.empty:
-                st.session_state['logged_in'] = True
-                st.session_state['user'] = username
-                st.session_state['role'] = user_data.iloc[0]['Role']
-                st.rerun()
-            else:
-                st.sidebar.error("Invalid credentials")
+    # Mock data for demonstration purposes
+    inventory_data = {
+        'Category': ['UPS System', 'Electric Power Source'],
+        'Asset Name': ['UPS-01', 'Gen-01'],
+        'Asset Code': ['UPS-101', 'GEN-202'],
+        'Unit': ['Nos', 'Nos'],
+        'Quantity': [2, 1],
+        'Status': ['Functional', 'Non-Functional'],
+        'Unit Cost': [5000, 15000],
+        'Total Value': [10000, 15000],
+        'Expected Life': [10, 15],
+        'Current Life': [4, 16]
+    }
+    return pd.DataFrame(inventory_data), pd.DataFrame()
 
-# --- APP MODULES ---
-def asset_registry():
-    st.header("🏗️ Asset Registration")
-    with st.form("asset_form", clear_on_submit=True):
-        name = st.text_input("Asset Name")
-        category = st.selectbox("Category", ["Roadside", "Pavement", "Signage", "Lighting"])
-        unit = st.text_input("Unit (e.g., Meter, Piece)")
-        cost = st.number_input("Standard Unit Cost", min_value=0.0)
-        
-        if st.form_submit_button("Register Asset"):
-            ws = gc.worksheet("AssetRegistry")
-            # ID is set by counting rows
-            ws.append_row([len(ws.get_all_values()), name, category, unit, cost])
-            st.success(f"Asset '{name}' added successfully!")
+# --- APP LAYOUT ---
+st.set_page_config(page_title="Electro-Mech Asset Manager", layout="wide")
+st.title("⚙️ Electro-Mechanical Asset Management System")
 
-def damage_reporting():
-    st.header("🚨 Damage Reporting")
-    assets_df = get_data("AssetRegistry")
-    
-    if assets_df.empty:
-        st.warning("No assets found. Please register assets first.")
-        return
+tab1, tab2, tab3 = st.tabs(["📊 Dashboard", "➕ Asset Entry", "🛠️ Maintenance Log"])
 
-    asset_list = assets_df['Asset Name'].tolist()
-    
-    with st.form("damage_form", clear_on_submit=True):
-        case_no = st.text_input("Case Number (Reference)")
-        asset_name = st.selectbox("Select Damaged Asset", asset_list)
-        location = st.text_input("Location Details")
-        gps = st.text_input("GPS Coordinates")
-        date = st.date_input("Date of Incident")
-        
-        if st.form_submit_button("Submit Report"):
-            ws = gc.worksheet("DamageReports")
-            ws.append_row([case_no, asset_name, location, gps, str(date), st.session_state['user'], "Pending"])
-            st.success(f"Report {case_no} submitted successfully.")
-
-def cost_estimation():
-    st.header("💰 Engineering Cost Estimation")
-    reports_df = get_data("DamageReports")
-    
-    if reports_df.empty:
-        st.info("No damage reports found.")
-        return
-
-    pending_cases = reports_df[reports_df['Status'] == 'Pending']['Case No'].tolist()
-    
-    if not pending_cases:
-        st.info("No pending damage reports to estimate.")
-        return
-
-    case_select = st.selectbox("Select Case Number to Estimate", pending_cases)
-    qty = st.number_input("Quantity Damaged", min_value=0.1, format="%.2f")
-    
-    # Auto-fetch Unit Cost from Registry
-    asset_name = reports_df[reports_df['Case No'] == case_select]['Asset Name'].values[0]
-    registry_df = get_data("AssetRegistry")
-    unit_cost = registry_df[registry_df['Asset Name'] == asset_name]['Unit Cost'].values[0]
-    
-    subtotal = qty * unit_cost
-    vat = subtotal * 0.15
-    grand_total = subtotal + vat
+# --- TAB 1: DASHBOARD ---
+with tab1:
+    inv_df, maint_df = load_data()
     
     col1, col2 = st.columns(2)
-    col1.metric("Unit Cost", f"${unit_cost:,.2f}")
-    col2.metric("Total (Inc. VAT)", f"${grand_total:,.2f}")
-
-    if st.button("Finalize and Save Estimation"):
-        # Save to Estimations sheet
-        ws_est = gc.worksheet("Estimations")
-        ws_est.append_row([case_select, qty, subtotal, vat, grand_total, st.session_state['user'], "No"])
-        
-        # Update Status in DamageReports
-        ws_rep = gc.worksheet("DamageReports")
-        cell = ws_rep.find(str(case_select))
-        ws_rep.update_cell(cell.row, 7, "Estimated") # Status is Column 7
-        
-        st.success("Estimation saved and Case Status updated!")
-        st.cache_resource.clear() # Clear cache to refresh data
-
-def admin_panel():
-    st.header("👥 User Management")
-    with st.expander("Add New User"):
-        new_u = st.text_input("New Username")
-        new_p = st.text_input("New Password")
-        new_r = st.selectbox("Role", ["Admin", "Safety", "Engineer", "Manager"])
-        if st.button("Create User"):
-            gc.worksheet("Users").append_row([new_u, new_p, new_r])
-            st.success(f"User {new_u} created.")
+    with col1:
+        total_value = inv_df['Total Value'].sum()
+        st.metric("Total Enterprise Asset Value", f"${total_value:,}")
     
-    st.subheader("Current Users")
-    st.dataframe(get_data("Users"), use_container_width=True)
-
-# --- MAIN NAVIGATION ---
-if 'logged_in' not in st.session_state:
-    login()
-else:
-    st.sidebar.info(f"👤 **{st.session_state['user']}** ({st.session_state['role']})")
-    task = st.sidebar.radio("Go to:", ["Dashboard", "Asset Registry", "Damage Reporting", "Cost Estimation", "Admin Panel"])
+    st.divider()
     
-    if st.sidebar.button("Logout"):
-        st.session_state.clear()
-        st.rerun()
+    # Horizontal Bar Chart: Asset Condition by Category
+    cond_df = inv_df.groupby(['Category', 'Status']).size().reset_index(name='Count')
+    fig_cat = px.bar(cond_df, x='Count', y='Category', color='Status', 
+                     orientation='h', title="Asset Condition by Category",
+                     color_discrete_map={'Functional': '#2ecc71', 'Non-Functional': '#e74c3c'})
+    st.plotly_chart(fig_cat, use_container_width=True)
 
-    if task == "Dashboard":
-        st.title("📊 System Overview")
-        df = get_data("DamageReports")
-        if not df.empty:
-            st.dataframe(df, use_container_width=True)
-        else:
-            st.write("No data available yet.")
+    # Vertical Bar Chart: Subsystem Condition
+    fig_sub = px.bar(inv_df, x='Asset Name', y='Current Life', color='Status',
+                     title="Asset Lifecycle Status (Current Age)")
+    st.plotly_chart(fig_sub, use_container_width=True)
 
-    elif task == "Asset Registry":
-        asset_registry()
-    elif task == "Damage Reporting":
-        damage_reporting()
-    elif task == "Cost Estimation":
-        cost_estimation()
-    elif task == "Admin Panel":
-        if st.session_state['role'] == "Admin":
-            admin_panel()
-        else:
-            st.error("Access Denied: Admins Only.")
+# --- TAB 2: ASSET ENTRY ---
+with tab2:
+    st.header("Register New Asset")
+    with st.form("asset_form"):
+        col_a, col_b = st.columns(2)
+        category = col_a.selectbox("Main System", list(ASSET_CATEGORIES.keys()))
+        subsystem = col_a.selectbox("Subsystem", ASSET_CATEGORIES[category])
+        asset_code = col_b.text_input("Asset Code (e.g., GEN-001)")
+        
+        status = col_a.radio("Functionality Status", ["Functional", "Non-Functional"])
+        qty = col_b.number_input("Total Quantity", min_value=1)
+        u_cost = col_b.number_input("Unit Cost", min_value=0.0)
+        
+        if st.form_submit_button("Save Asset to Google Sheets"):
+            # Logic to append row to Google Sheet
+            st.success(f"Asset {asset_code} recorded successfully!")
+
+# --- TAB 3: MAINTENANCE LOG ---
+with tab3:
+    st.header("Maintenance History & Root Cause Analysis")
+    with st.expander("Add Maintenance Record"):
+        m_asset = st.selectbox("Select Asset for Maintenance", inv_df['Asset Code'].unique())
+        m_date = st.date_input("Date of Maintenance")
+        m_root_cause = st.selectbox("Root Cause", ["Wear and Tear", "Power Surge", "Lack of Service", "Environmental", "Accidental"])
+        m_desc = st.text_area("Work Performed")
+        
+        if st.form_submit_button("Log Maintenance"):
+            st.info("Record logged.")
+
+    st.subheader("Root Cause Analysis (RCA)")
+    # Sample RCA Visualization
+    rca_data = pd.DataFrame({'Cause': ["Wear and Tear", "Power Surge"], 'Count': [10, 3]})
+    fig_rca = px.pie(rca_data, values='Count', names='Cause', title="Maintenance Root Cause Distribution")
+    st.plotly_chart(fig_rca)
             
+
 
 
 
