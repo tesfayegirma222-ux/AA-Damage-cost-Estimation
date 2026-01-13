@@ -7,11 +7,34 @@ from datetime import datetime
 # --- 1. SECURE CONNECTION LOGIC ---
 def connect_gs():
     try:
-        # Define the scope for Sheets and Drive
+        # Define the required scopes for both Sheets and Drive
         scope = [
             "https://www.googleapis.com/auth/spreadsheets",
             "https://www.googleapis.com/auth/drive"
         ]
+        
+        if "gcp_service_account" in st.secrets:
+            # 1. Convert the Secret object to a standard Python dictionary
+            creds_info = dict(st.secrets["gcp_service_account"])
+            
+            # 2. FIX: The private_key often gets messed up when pasting into Streamlit
+            # This line ensures it has the correct newline characters
+            if "private_key" in creds_info:
+                creds_info["private_key"] = creds_info["private_key"].replace("\\n", "\n")
+            
+            # 3. Create credentials from the dictionary
+            creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_info, scope)
+            
+            # 4. Authorize and Open the Sheet
+            client = gspread.authorize(creds)
+            return client.open("Asset_Damage_System")
+        else:
+            st.error("⚠️ Secrets key '[gcp_service_account]' not found in Settings.")
+            return None
+    except Exception as e:
+        # If we see <Response [200]>, this error block catches it
+        st.error(f"❌ Connection Error: {e}")
+        return None
         
         # Check for Secrets in Streamlit Cloud
         if "gcp_service_account" in st.secrets:
@@ -151,6 +174,7 @@ else:
                 ws.update_cell(cell.row, 6, "Estimated") # Status Column
                 st.success("Cloud Updated!")
                 st.rerun()
+
 
 
 
