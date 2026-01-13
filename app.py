@@ -5,7 +5,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 import datetime
 
-# --- 1. CONFIGURATION: ASSET STRUCTURE ---
+# --- 1. ASSET STRUCTURE CONFIGURATION ---
 ASSET_CATEGORIES = {
     "Electric Power Source": ["Electric Utility", "Generator"],
     "Electric Power Distribution": ["ATS", "Breakers", "Power Cable", "Main Breakers", "DP"],
@@ -20,7 +20,7 @@ ASSET_CATEGORIES = {
     "WIM System": ["Weight-In-Motion Sensor", "WIM Controller"]
 }
 
-# --- 2. AUTH & CONNECTION ---
+# --- 2. GOOGLE SHEETS CONNECTION ---
 def init_connection():
     scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     try:
@@ -33,7 +33,7 @@ def init_connection():
         st.error(f"Configuration Error: {e}")
         st.stop()
 
-# --- 3. UI THEME & HEADER ---
+# --- 3. PROFESSIONAL UI & BLUE HEADER ---
 st.set_page_config(page_title="AAE Asset Portal", layout="wide")
 
 st.markdown("""
@@ -59,7 +59,7 @@ st.markdown("""
     </div>
     """, unsafe_allow_html=True)
 
-# Sidebar Navigation
+# Sidebar Navigation Menu
 with st.sidebar:
     st.image("https://img.icons8.com/fluency/96/highway.png", width=80)
     st.title("Main Menu")
@@ -70,27 +70,30 @@ with st.sidebar:
         "🛠️ Maintenance Log"
     ])
     st.divider()
-    st.info("System: AAE-EMS v3.0")
+    st.info("Authorized Access Only")
 
-# --- 4. DATA HANDLING ---
+# --- 4. DATA LOADING & CLEANING ---
 sh = init_connection()
 inv_ws = sh.worksheet("Inventory")
 maint_ws = sh.worksheet("Maintenance")
 
 df_inv = pd.DataFrame(inv_ws.get_all_records())
-df_inv.columns = [c.strip() for c in df_inv.columns]
+df_inv.columns = [c.strip() for c in df_inv.columns] # Defensive Header Cleaning
+
+df_maint = pd.DataFrame(maint_ws.get_all_records())
+df_maint.columns = [c.strip() for c in df_maint.columns]
+
+# Ensure Numeric columns are safe for calculation
+num_cols = ['Total Value', 'Quantity', 'Current Life', 'Expected Life']
+for col in num_cols:
+    if col in df_inv.columns:
+        df_inv[col] = pd.to_numeric(df_inv[col], errors='coerce').fillna(0)
 
 # --- 5. MODULE LOGIC ---
 
-# MODULE: DASHBOARD
+# --- DASHBOARD ---
 if menu == "📊 Dashboard":
     if not df_inv.empty:
-        # Pre-process numeric columns
-        num_cols = ['Total Value', 'Quantity', 'Current Life', 'Expected Life']
-        for col in num_cols:
-            if col in df_inv.columns:
-                df_inv[col] = pd.to_numeric(df_inv[col], errors='coerce').fillna(0)
-        
         m1, m2, m3, m4 = st.columns(4)
         total_val = df_inv['Total Value'].sum() if 'Total Value' in df_inv.columns else 0
         m1.metric("Enterprise Value", f"${total_val:,.0f}")
@@ -105,19 +108,25 @@ if menu == "📊 Dashboard":
         m4.metric("Aging Alerts", aging)
 
         st.divider()
-        st.subheader("📋 System Health Summary")
+        st.subheader("📋 System Health & Quantity Summary")
+        
         summary = df_inv.groupby(['Category', 'Status'])['Quantity'].sum().unstack(fill_value=0)
         for s in ['Functional', 'Non-Functional']:
             if s not in summary.columns: summary[s] = 0
         summary['Total Qty'] = summary['Functional'] + summary['Non-Functional']
-        summary['Health %'] = (summary['Functional'] / summary['Total Qty'] * 100).round(1)
-        st.dataframe(summary.sort_values('Health %'), use_container_width=True)
+        summary['Health Score'] = (summary['Functional'] / summary['Total Qty'] * 100).round(1)
+        
+        st.dataframe(
+            summary.sort_values('Health Score'),
+            use_container_width=True,
+            column_config={"Health Score": st.column_config.ProgressColumn("Health %", format="%.1f%%", min_value=0, max_value=100)}
+        )
     else:
-        st.info("No data found.")
+        st.info("Registry is currently empty.")
 
-# MODULE: REGISTER ASSET (STATUS REMOVED)
+# --- REGISTER NEW ASSET ---
 elif menu == "📝 Register New Asset":
-    st.subheader("Asset Hardware Entry")
+    st.subheader("Hardware Registration Registry")
     cat_select = st.selectbox("1. Category", list(ASSET_CATEGORIES.keys()))
     sub_options = ASSET_CATEGORIES[cat_select]
     
@@ -131,53 +140,59 @@ elif menu == "📝 Register New Asset":
         e_life = c2.number_input("Expected Life (Yrs)", min_value=1)
         c_life = c1.number_input("Current Age (Yrs)", min_value=0)
         
-        if st.form_submit_button("✅ Register Hardware"):
-            # Default new assets to 'Functional' on first registration
+        if st.form_submit_button("✅ Register to Database"):
+            # Initial Status is set to Functional automatically
             inv_ws.append_row([cat_select, sub_select, asset_code, unit, qty, "Functional", u_cost, qty*u_cost, e_life, c_life])
-            st.success(f"Asset {asset_code} registered.")
+            st.success(f"Asset {asset_code} saved.")
             st.rerun()
 
-# MODULE: CONDITIONAL ASSESSMENT (NEW MODULE)
+# --- CONDITIONAL ASSESSMENT (MANUAL STATUS UPDATE) ---
 elif menu == "🔎 Conditional Assessment":
     st.subheader("Manual Status Update Dashboard")
     if not df_inv.empty:
-        st.write("Select an asset to change its current functional status.")
-        
-        # Search filter for specific asset
-        search_code = st.selectbox("Select Asset Code to Assess", df_inv["Asset Code"].unique())
-        
-        # Get current data for selected asset
+        # Top Update Form
+        st.write("### ✍️ Change Asset Condition")
+        search_code = st.selectbox("Select Asset Code", df_inv["Asset Code"].unique())
         asset_data = df_inv[df_inv["Asset Code"] == search_code].iloc[0]
-        st.info(f"Current Status of **{search_code}**: {asset_data['Status']}")
+        
+        # Identity Card
+        st.markdown(f"""
+            <div style="background-color: #f0f4f8; padding: 15px; border-radius: 8px; border-left: 5px solid #1E3A8A;">
+                <b>Category:</b> {asset_data['Category']} | <b>Subsystem:</b> {asset_data['Asset Name']}<br>
+                <b>Current Status:</b> <span style="color: {'#10B981' if asset_data['Status'] == 'Functional' else '#EF4444'};">{asset_data['Status']}</span>
+            </div>
+        """, unsafe_allow_html=True)
         
         with st.form("status_update"):
             new_status = st.radio("Updated Functional Condition", ["Functional", "Non-Functional"], 
-                                  index=0 if asset_data['Status'] == "Functional" else 1)
-            
-            if st.form_submit_button("💾 Update Condition Status"):
-                # Find the row in Google Sheets (adding 2 to match index + header)
+                                  index=0 if asset_data['Status'] == "Functional" else 1, horizontal=True)
+            if st.form_submit_button("💾 Update Status in Sheets"):
                 row_idx = df_inv.index[df_inv['Asset Code'] == search_code].tolist()[0] + 2
-                # Update Column 6 (Status)
-                inv_ws.update_cell(row_idx, 6, new_status)
+                inv_ws.update_cell(row_idx, 6, new_status) # Update Status Column
                 st.success(f"Status for {search_code} updated to {new_status}!")
                 st.rerun()
-    else:
-        st.warning("Register assets first.")
 
-# MODULE: MAINTENANCE LOG
+        st.divider()
+        # Bottom Asset Table
+        st.write("### 📋 Live Inventory Table")
+        st.dataframe(df_inv[["Category", "Asset Name", "Asset Code", "Status", "Quantity"]], use_container_width=True, hide_index=True)
+    else:
+        st.warning("No assets registered.")
+
+# --- MAINTENANCE LOG ---
 elif menu == "🛠️ Maintenance Log":
-    st.subheader("Maintenance History")
+    st.subheader("Asset Repair History")
     if not df_inv.empty:
-        with st.form("m_form"):
+        with st.form("m_form", clear_on_submit=True):
             m_code = st.selectbox("Asset Code", df_inv["Asset Code"].unique())
             m_cause = st.selectbox("Root Cause", ["Wear and Tear", "Power Surge", "Lack of Service", "Environmental", "Accidental"])
             m_desc = st.text_area("Details")
             m_cost = st.number_input("Repair Cost", min_value=0.0)
-            if st.form_submit_button("💾 Save Record"):
-                maint_ws = sh.worksheet("Maintenance")
+            if st.form_submit_button("💾 Save Maintenance Record"):
                 maint_ws.append_row([m_code, str(datetime.date.today()), m_cause, m_desc, m_cost])
-                st.success("Log saved.")
+                st.success("Log recorded.")
                 st.rerun()
+
 
 
 
