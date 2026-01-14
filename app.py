@@ -67,7 +67,7 @@ with st.sidebar:
     menu = st.radio("Select Module", ["📊 Dashboard", "📝 Register New Asset", "🔎 Conditional Assessment", "🛠️ Maintenance Log"])
     st.divider()
     st.caption("Addis Ababa-Adama Expressway")
-    st.info("System: AAE-EMS v6.5")
+    st.info("System: AAE-EMS v7.0")
 
 # --- 4. DATA HANDLING & CRASH PREVENTION ---
 sh = init_connection()
@@ -75,7 +75,6 @@ inv_ws = sh.worksheet("Inventory")
 maint_ws = sh.worksheet("Maintenance")
 
 def get_safe_data(worksheet):
-    """Prevents GSpreadException by validating data presence before processing"""
     data = worksheet.get_all_values()
     if not data:
         return pd.DataFrame()
@@ -84,11 +83,10 @@ def get_safe_data(worksheet):
         return pd.DataFrame(data[1:], columns=headers)
     return pd.DataFrame(columns=headers)
 
-# Load Data
 df_inv = get_safe_data(inv_ws)
 df_maint = get_safe_data(maint_ws)
 
-# Numeric Safety & Dynamic Column Initialization
+# Numeric Safety
 num_cols = ['Total Value', 'Quantity', 'Current Life', 'Expected Life', 'Functional Qty', 'Non-Functional Qty']
 for col in num_cols:
     if col in df_inv.columns:
@@ -98,7 +96,7 @@ for col in num_cols:
 
 # --- 5. MODULE LOGIC ---
 
-# MODULE: DASHBOARD
+# DASHBOARD
 if menu == "📊 Dashboard":
     if not df_inv.empty:
         m1, m2, m3, m4 = st.columns(4)
@@ -115,18 +113,14 @@ if menu == "📊 Dashboard":
         st.subheader("📊 System Health by Category")
         cat_summary = df_inv.groupby('Category').agg({'Functional Qty': 'sum', 'Quantity': 'sum'}).reset_index()
         cat_summary['Health %'] = (cat_summary['Functional Qty'] / cat_summary['Quantity'] * 100).round(1)
-
         fig = px.bar(cat_summary.sort_values('Health %'), x='Health %', y='Category', orientation='h',
                      color='Health %', color_continuous_scale='RdYlGn', range_x=[0, 100], text='Health %')
         fig.update_layout(height=400, margin=dict(l=20, r=20, t=10, b=10))
         st.plotly_chart(fig, use_container_width=True)
-        
-        with st.expander("🔍 View Subsystem Details"):
-            st.dataframe(df_inv[['Category', 'Asset Name', 'Quantity', 'Functional Qty', 'Non-Functional Qty']], use_container_width=True)
     else:
         st.info("Inventory is empty.")
 
-# MODULE: REGISTER NEW ASSET
+# REGISTER
 elif menu == "📝 Register New Asset":
     st.subheader("Asset Registration")
     cat_select = st.selectbox("Category", list(ASSET_CATEGORIES.keys()))
@@ -144,46 +138,57 @@ elif menu == "📝 Register New Asset":
             st.success("Asset recorded.")
             st.rerun()
 
-# MODULE: CONDITIONAL ASSESSMENT
+# ASSESSMENT (EDIT & DELETE)
 elif menu == "🔎 Conditional Assessment":
-    st.subheader("Quantity Assessment")
+    st.subheader("Manual Inventory & Quantity Assessment")
     if not df_inv.empty:
         df_edit = df_inv[["Category", "Asset Name", "Quantity", "Functional Qty", "Non-Functional Qty"]].copy()
         edited_df = st.data_editor(df_edit, column_config={
-                "Quantity": st.column_config.NumberColumn("Total", disabled=True),
+                "Quantity": st.column_config.NumberColumn("Total", min_value=0),
                 "Functional Qty": st.column_config.NumberColumn("Functional ✅", min_value=0),
                 "Non-Functional Qty": st.column_config.NumberColumn("Non-Functional ❌", min_value=0),
                 "Category": st.column_config.Column(disabled=True), "Asset Name": st.column_config.Column(disabled=True),
-            }, hide_index=True, use_container_width=True)
-        if st.button("💾 Save All Changes"):
-            for index, row in edited_df.iterrows():
-                row_idx = index + 2
-                new_status = "Functional" if row['Functional Qty'] > 0 else "Non-Functional"
-                inv_ws.update_cell(row_idx, 6, new_status)
-                inv_ws.update_cell(row_idx, 11, int(row['Functional Qty']))
-                inv_ws.update_cell(row_idx, 12, int(row['Non-Functional Qty']))
-            st.success("Synced!")
-            st.rerun()
+            }, num_rows="dynamic", hide_index=True, use_container_width=True)
 
-# MODULE: MAINTENANCE LOG
+        if st.button("💾 Save All Changes (Updates & Deletions)"):
+            with st.spinner("Syncing..."):
+                if len(edited_df) != len(df_inv): # Handle Deletion
+                    inv_ws.clear()
+                    inv_ws.append_row(df_inv.columns.tolist())
+                    for idx in range(len(edited_df)):
+                        df_inv.at[idx, 'Quantity'] = edited_df.iloc[idx]['Quantity']
+                        df_inv.at[idx, 'Functional Qty'] = edited_df.iloc[idx]['Functional Qty']
+                        df_inv.at[idx, 'Non-Functional Qty'] = edited_df.iloc[idx]['Non-Functional Qty']
+                        df_inv.at[idx, 'Status'] = "Functional" if edited_df.iloc[idx]['Functional Qty'] > 0 else "Non-Functional"
+                    inv_ws.append_rows(df_inv.iloc[:len(edited_df)].values.tolist())
+                else: # Simple Update
+                    for index, row in edited_df.iterrows():
+                        row_idx = index + 2
+                        new_status = "Functional" if row['Functional Qty'] > 0 else "Non-Functional"
+                        inv_ws.update_cell(row_idx, 5, int(row['Quantity']))
+                        inv_ws.update_cell(row_idx, 6, new_status)
+                        inv_ws.update_cell(row_idx, 11, int(row['Functional Qty']))
+                        inv_ws.update_cell(row_idx, 12, int(row['Non-Functional Qty']))
+                st.success("Database synced!")
+                st.rerun()
+
+# MAINTENANCE
 elif menu == "🛠️ Maintenance Log":
     st.subheader("🛠️ Log Maintenance")
     if not df_inv.empty:
-        m_cat = st.selectbox("Category Filter", sorted(df_inv["Category"].unique()))
+        m_cat = st.selectbox("Category", sorted(df_inv["Category"].unique()))
         filtered_sub = df_inv[df_inv["Category"] == m_cat]["Asset Name"].unique()
         with st.form("m_form", clear_on_submit=True):
             m_target = st.selectbox("Subsystem", filtered_sub)
             c1, c2, c3 = st.columns(3)
-            m_qty = c1.number_input("Qty", min_value=1)
-            m_unit = c2.selectbox("Unit", ["Nos", "Set", "Units", "Meters"])
-            m_loc = c3.text_input("Location (KM)")
+            m_qty = c1.number_input("Qty", min_value=1); m_unit = c2.selectbox("Unit", ["Nos", "Set", "Units", "Meters"]); m_loc = c3.text_input("Location (KM)")
             m_cause = st.selectbox("Cause", ["Wear and Tear", "Power Surge", "Lack of Service", "Environmental", "Accidental"])
-            m_desc = st.text_area("Description")
-            m_cost = st.number_input("Cost", min_value=0.0)
+            m_desc = st.text_area("Description"); m_cost = st.number_input("Cost", min_value=0.0)
             if st.form_submit_button("💾 Save"):
                 maint_ws.append_row([m_cat, m_target, str(datetime.date.today()), m_qty, m_unit, m_loc, m_cause, m_desc, m_cost])
                 st.success("Log saved.")
                 st.rerun()
+
 
 
 
