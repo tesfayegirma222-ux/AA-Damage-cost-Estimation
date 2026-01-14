@@ -61,7 +61,7 @@ st.markdown("""
 
 # Sidebar Navigation
 with st.sidebar:
-    st.image("https://imgur.com/a/95tvVob", width=200)
+    st.image("https://https://www.istockphoto.com/photo/the-core-document-management-concept-is-realized-through-our-document-management-gm2252478691-665934605?searchscope=image%2Cfilm", width=200)
     st.title("Main Menu")
     menu = st.radio("Select Module", ["📊 Dashboard", "📝 Register New Asset", "🔎 Conditional Assessment", "🛠️ Maintenance Log"])
     st.divider()
@@ -182,6 +182,7 @@ elif menu == "🛠️ Maintenance Log":
                 maint_ws.append_row([m_cat, m_target, str(datetime.date.today()), m_qty, m_unit, m_loc, m_cause, m_desc, m_cost])
                 st.success(f"Log saved: {m_cat} > {m_target}")
                 st.rerun()
+
 
 
 
