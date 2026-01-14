@@ -62,7 +62,7 @@ st.markdown("""
 # Sidebar Navigation
 with st.sidebar:
     # URL Image Logo
-    logo_url = "https://www.istockphoto.com/photo/the-core-document-management-concept-is-realized-through-our-document-management-gm2252478691-665934605?searchscope=image%2Cfilm" 
+    logo_url = "https://www.freepik.com/free-vector/landing-page-transfer-files-concept_5683385.htm#fromView=keyword&page=1&position=2&uuid=9e956ee8-1198-47d4-a865-c65a4e6276b7&query=Document+digitization" 
     st.image(logo_url, width=120)
     
     st.title("Main Menu")
@@ -199,6 +199,7 @@ elif menu == "🛠️ Maintenance Log":
                 maint_ws.append_row([m_cat, m_target, str(datetime.date.today()), m_qty, m_unit, m_loc, m_cause, m_desc, m_cost])
                 st.success(f"Log saved: {m_target} at {m_loc}")
                 st.rerun()
+
 
 
 
