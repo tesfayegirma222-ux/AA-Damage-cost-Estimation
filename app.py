@@ -105,7 +105,7 @@ if menu == "📊 Dashboard":
         func_q = df_inv['Functional Qty'].sum() if 'Functional Qty' in df_inv.columns else 0
         health_pct = (func_q / total_q * 100) if total_q > 0 else 0
         m2.metric("Operational Health", f"{health_pct:.1f}%")
-        m3.metric("Critical Failures", int(df_inv['Non-Functional Qty'].sum()), delta_color="inverse")
+        m3.metric("Critical Failures", int(df_inv['Non-Functional Qty'].sum()), delta_color="normal")
         aging = len(df_inv[df_inv['Current Life'] >= df_inv['Expected Life']]) if 'Current Life' in df_inv.columns else 0
         m4.metric("Aging Alerts", aging)
 
@@ -190,6 +190,7 @@ elif menu == "🛠️ Maintenance Log":
                 maint_ws.append_row([m_cat, m_target, str(datetime.date.today()), m_qty, m_unit, m_loc, m_cause, m_desc, m_cost])
                 st.success("Log saved.")
                 st.rerun()
+
 
 
 
