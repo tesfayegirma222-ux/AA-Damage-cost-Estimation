@@ -188,7 +188,8 @@ elif menu == "🛠️ Maintenance Log":
                 # Appends: Name, Date, Qty, Unit, Location, Cause, Description, Cost
                 maint_ws.append_row([m_target, str(datetime.date.today()), m_qty, m_unit, m_loc, m_cause, m_desc, m_cost])
                 st.success(f"Log saved for {m_target} at {m_loc}.")
-                st.rerun()rerun()
+                st.rerun()
+
 
 
 
