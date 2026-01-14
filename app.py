@@ -67,7 +67,7 @@ with st.sidebar:
     menu = st.radio("Select Module", ["📊 Dashboard", "📝 Register New Asset", "🔎 Conditional Assessment", "🛠️ Maintenance Log"])
     st.divider()
     st.caption("Addis Ababa-Adama Expressway")
-    st.info("System: AAE-EMS v7.0")
+    st.info("System: AAE-EMS v7.5")
 
 # --- 4. DATA HANDLING & CRASH PREVENTION ---
 sh = init_connection()
@@ -96,7 +96,7 @@ for col in num_cols:
 
 # --- 5. MODULE LOGIC ---
 
-# DASHBOARD
+# MODULE: DASHBOARD
 if menu == "📊 Dashboard":
     if not df_inv.empty:
         m1, m2, m3, m4 = st.columns(4)
@@ -120,7 +120,7 @@ if menu == "📊 Dashboard":
     else:
         st.info("Inventory is empty.")
 
-# REGISTER
+# MODULE: REGISTER NEW ASSET
 elif menu == "📝 Register New Asset":
     st.subheader("Asset Registration")
     cat_select = st.selectbox("Category", list(ASSET_CATEGORIES.keys()))
@@ -138,41 +138,43 @@ elif menu == "📝 Register New Asset":
             st.success("Asset recorded.")
             st.rerun()
 
-# ASSESSMENT (EDIT & DELETE)
+# MODULE: CONDITIONAL ASSESSMENT
 elif menu == "🔎 Conditional Assessment":
-    st.subheader("Manual Inventory & Quantity Assessment")
+    st.subheader("🔎 Asset Quantity & Status Assessment")
     if not df_inv.empty:
+        st.markdown("### 📝 Edit Quantities")
         df_edit = df_inv[["Category", "Asset Name", "Quantity", "Functional Qty", "Non-Functional Qty"]].copy()
         edited_df = st.data_editor(df_edit, column_config={
                 "Quantity": st.column_config.NumberColumn("Total", min_value=0),
                 "Functional Qty": st.column_config.NumberColumn("Functional ✅", min_value=0),
                 "Non-Functional Qty": st.column_config.NumberColumn("Non-Functional ❌", min_value=0),
                 "Category": st.column_config.Column(disabled=True), "Asset Name": st.column_config.Column(disabled=True),
-            }, num_rows="dynamic", hide_index=True, use_container_width=True)
+            }, hide_index=True, use_container_width=True, key="inv_editor")
 
-        if st.button("💾 Save All Changes (Updates & Deletions)"):
-            with st.spinner("Syncing..."):
-                if len(edited_df) != len(df_inv): # Handle Deletion
-                    inv_ws.clear()
-                    inv_ws.append_row(df_inv.columns.tolist())
-                    for idx in range(len(edited_df)):
-                        df_inv.at[idx, 'Quantity'] = edited_df.iloc[idx]['Quantity']
-                        df_inv.at[idx, 'Functional Qty'] = edited_df.iloc[idx]['Functional Qty']
-                        df_inv.at[idx, 'Non-Functional Qty'] = edited_df.iloc[idx]['Non-Functional Qty']
-                        df_inv.at[idx, 'Status'] = "Functional" if edited_df.iloc[idx]['Functional Qty'] > 0 else "Non-Functional"
-                    inv_ws.append_rows(df_inv.iloc[:len(edited_df)].values.tolist())
-                else: # Simple Update
-                    for index, row in edited_df.iterrows():
-                        row_idx = index + 2
-                        new_status = "Functional" if row['Functional Qty'] > 0 else "Non-Functional"
-                        inv_ws.update_cell(row_idx, 5, int(row['Quantity']))
-                        inv_ws.update_cell(row_idx, 6, new_status)
-                        inv_ws.update_cell(row_idx, 11, int(row['Functional Qty']))
-                        inv_ws.update_cell(row_idx, 12, int(row['Non-Functional Qty']))
-                st.success("Database synced!")
+        if st.button("💾 Save Quantity Updates"):
+            with st.spinner("Updating..."):
+                for index, row in edited_df.iterrows():
+                    row_idx = index + 2
+                    new_status = "Functional" if row['Functional Qty'] > 0 else "Non-Functional"
+                    inv_ws.update_cell(row_idx, 5, int(row['Quantity']))
+                    inv_ws.update_cell(row_idx, 6, new_status)
+                    inv_ws.update_cell(row_idx, 11, int(row['Functional Qty']))
+                    inv_ws.update_cell(row_idx, 12, int(row['Non-Functional Qty']))
+                st.success("Quantities updated!")
                 st.rerun()
 
-# MAINTENANCE
+        st.divider()
+        st.markdown("### 🗑️ Permanent Deletion")
+        with st.expander("Danger Zone - Delete Assets"):
+            df_inv['Delete_Label'] = df_inv['Category'] + " | " + df_inv['Asset Name']
+            asset_to_delete = st.selectbox("Select Asset to Remove", df_inv['Delete_Label'].tolist())
+            if st.button("❌ Confirm Permanent Deletion"):
+                target_idx = df_inv[df_inv['Delete_Label'] == asset_to_delete].index[0]
+                inv_ws.delete_rows(int(target_idx) + 2)
+                st.warning(f"Deleted: {asset_to_delete}")
+                st.rerun()
+
+# MODULE: MAINTENANCE LOG
 elif menu == "🛠️ Maintenance Log":
     st.subheader("🛠️ Log Maintenance")
     if not df_inv.empty:
@@ -188,6 +190,7 @@ elif menu == "🛠️ Maintenance Log":
                 maint_ws.append_row([m_cat, m_target, str(datetime.date.today()), m_qty, m_unit, m_loc, m_cause, m_desc, m_cost])
                 st.success("Log saved.")
                 st.rerun()
+
 
 
 
