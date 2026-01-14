@@ -65,22 +65,22 @@ with st.sidebar:
     st.title("Main Menu")
     menu = st.radio("Select Module", ["📊 Dashboard", "📝 Register New Asset", "🔎 Conditional Assessment", "🛠️ Maintenance Log"])
     st.divider()
-    st.info("System: AAE-EMS v3.7")
+    st.info("System: AAE-EMS v3.8")
 
-# --- 4. DATA HANDLING & SAFE HEADER STRIP (Fixes AttributeError) ---
+# --- 4. DATA HANDLING & SAFE HEADER STRIP (Fixes AttributeError & KeyError) ---
 sh = init_connection()
 inv_ws = sh.worksheet("Inventory")
 maint_ws = sh.worksheet("Maintenance")
 
-# Load Inventory and force headers to strings before stripping
+# Load Inventory - Use list comprehension to force headers to strings
 df_inv = pd.DataFrame(inv_ws.get_all_records())
-df_inv.columns = pd.Index(df_inv.columns).astype(str).str.strip() 
+df_inv.columns = [str(c).strip() for c in df_inv.columns] 
 
-# Load Maintenance and force headers to strings (Prevents crash if empty)
+# Load Maintenance - Safe Strip prevents crash if sheet is empty
 df_maint = pd.DataFrame(maint_ws.get_all_records())
-df_maint.columns = pd.Index(df_maint.columns).astype(str).str.strip()
+df_maint.columns = [str(c).strip() for c in df_maint.columns]
 
-# Numeric Safety
+# Defensive Numeric Conversion for Dashboard Math
 for col in ['Total Value', 'Quantity', 'Current Life', 'Expected Life']:
     if col in df_inv.columns:
         df_inv[col] = pd.to_numeric(df_inv[col], errors='coerce').fillna(0)
@@ -90,6 +90,7 @@ for col in ['Total Value', 'Quantity', 'Current Life', 'Expected Life']:
 # MODULE: DASHBOARD
 if menu == "📊 Dashboard":
     if not df_inv.empty:
+        # KPI Metrics
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Enterprise Value", f"${df_inv['Total Value'].sum():,.0f}")
         
@@ -97,7 +98,7 @@ if menu == "📊 Dashboard":
         m2.metric("Operational Health", f"{health_pct:.1f}%")
         
         non_func = len(df_inv[df_inv['Status']=='Non-Functional'])
-        m3.metric("Critical Failures", non_func, delta="- Repairs Needed" if non_func > 0 else None, delta_color="inverse")
+        m3.metric("Critical Failures", non_func, delta="- Action Needed" if non_func > 0 else None, delta_color="inverse")
         
         aging = len(df_inv[df_inv['Current Life'] >= df_inv['Expected Life']]) if 'Current Life' in df_inv.columns else 0
         m4.metric("Aging Alerts", aging)
@@ -105,7 +106,7 @@ if menu == "📊 Dashboard":
         st.divider()
         st.subheader("📋 System & Subsystem Health Summary")
         
-        # Breakdown by Category and Subsystem (Asset Name)
+        # Detailed Breakdown by Category and Subsystem (Asset Name)
         group_cols = ['Category', 'Asset Name']
         summary = df_inv.groupby(group_cols + ['Status'])['Quantity'].sum().unstack(fill_value=0)
         
@@ -121,18 +122,18 @@ if menu == "📊 Dashboard":
             column_config={"Health %": st.column_config.ProgressColumn("Health Score", format="%.1f%%", min_value=0, max_value=100)}
         )
     else:
-        st.info("The Inventory is currently empty.")
+        st.info("Inventory is currently empty. Please register assets.")
 
 # MODULE: REGISTER NEW ASSET
 elif menu == "📝 Register New Asset":
-    st.subheader("Asset Hardware Entry")
+    st.subheader("Asset Registration Entry")
     cat_select = st.selectbox("Select Category", list(ASSET_CATEGORIES.keys()))
     sub_options = ASSET_CATEGORIES[cat_select]
     
     with st.form("reg_form", clear_on_submit=True):
         c1, c2 = st.columns(2)
         sub_select = c1.selectbox("Subsystem", sub_options)
-        asset_code = c2.text_input("Asset Code (Unique ID)")
+        asset_code = c2.text_input("Asset Code")
         qty = c1.number_input("Quantity", min_value=1)
         u_cost = c2.number_input("Unit Cost", min_value=0.0)
         unit = c1.selectbox("Unit", ["Nos", "Set", "Units", "Meters"])
@@ -140,17 +141,20 @@ elif menu == "📝 Register New Asset":
         c_life = c1.number_input("Current Age (Yrs)", min_value=0)
         
         if st.form_submit_button("✅ Register Hardware"):
+            # New assets are Functional by default
             inv_ws.append_row([cat_select, sub_select, asset_code, unit, qty, "Functional", u_cost, qty*u_cost, e_life, c_life])
-            st.success("Asset recorded successfully.")
+            st.success(f"Asset {asset_code} successfully saved.")
             st.rerun()
 
-# MODULE: CONDITIONAL ASSESSMENT (INTERACTIVE ROW SELECTION)
+# MODULE: CONDITIONAL ASSESSMENT (INTERACTIVE SELECTION IN ROW)
 elif menu == "🔎 Conditional Assessment":
     st.subheader("Manual Status Update Dashboard")
     if not df_inv.empty:
-        st.info("Update the 'Status' column directly in the table, then click 'Save All Changes'.")
+        st.write("### ✍️ Edit Asset Conditions")
+        st.info("Modify the 'Status' column directly in the table, then click 'Save All Changes'.")
         
         df_edit = df_inv[["Category", "Asset Name", "Asset Code", "Status"]].copy()
+        
         edited_df = st.data_editor(
             df_edit,
             column_config={
@@ -162,19 +166,20 @@ elif menu == "🔎 Conditional Assessment":
             hide_index=True, use_container_width=True
         )
 
-        if st.button("💾 Save All Changes to Google Sheets"):
-            with st.spinner("Updating database..."):
+        if st.button("💾 Save All Changes to Sheets"):
+            with st.spinner("Updating Google Sheets..."):
                 for index, row in edited_df.iterrows():
+                    # Only update if the status was changed by the user
                     if row['Status'] != df_inv.iloc[index]['Status']:
                         inv_ws.update_cell(index + 2, 6, row['Status'])
-                st.success("Condition status updated!")
+                st.success("Condition statuses updated successfully!")
                 st.rerun()
     else:
         st.warning("No assets found in the registry.")
 
 # MODULE: MAINTENANCE LOG
 elif menu == "🛠️ Maintenance Log":
-    st.subheader("Log Maintenance Event")
+    st.subheader("Maintenance Record Entry")
     if not df_inv.empty:
         with st.form("m_form", clear_on_submit=True):
             m_code = st.selectbox("Asset Code", df_inv["Asset Code"].unique())
@@ -183,7 +188,7 @@ elif menu == "🛠️ Maintenance Log":
             m_cost = st.number_input("Repair Cost", min_value=0.0)
             if st.form_submit_button("💾 Save Record"):
                 maint_ws.append_row([m_code, str(datetime.date.today()), m_cause, m_desc, m_cost])
-                st.success("Log recorded.")
+                st.success("Maintenance log recorded.")
                 st.rerun()
 
 
