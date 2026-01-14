@@ -65,21 +65,21 @@ with st.sidebar:
     st.title("Main Menu")
     menu = st.radio("Select Module", ["📊 Dashboard", "📝 Register New Asset", "🔎 Conditional Assessment", "🛠️ Maintenance Log"])
     st.divider()
-    st.info("System: AAE-EMS v4.6")
+    st.info("System: AAE-EMS v5.0")
 
 # --- 4. DATA HANDLING & SAFE HEADER STRIP ---
 sh = init_connection()
 inv_ws = sh.worksheet("Inventory")
 maint_ws = sh.worksheet("Maintenance")
 
-# Load Inventory & Maintenance with Safe Strip
+# Load Inventory & Maintenance with Safe String Strip
 df_inv = pd.DataFrame(inv_ws.get_all_records())
 df_inv.columns = [str(c).strip() for c in df_inv.columns] 
 
 df_maint = pd.DataFrame(maint_ws.get_all_records())
 df_maint.columns = [str(c).strip() for c in df_maint.columns]
 
-# Numeric Safety
+# Numeric Safety & Quantity Logic
 num_cols = ['Total Value', 'Quantity', 'Current Life', 'Expected Life', 'Functional Qty', 'Non-Functional Qty']
 for col in num_cols:
     if col in df_inv.columns:
@@ -119,7 +119,7 @@ if menu == "📊 Dashboard":
 
 # MODULE: REGISTER NEW ASSET
 elif menu == "📝 Register New Asset":
-    st.subheader("Asset Registration")
+    st.subheader("New Asset Entry")
     cat_select = st.selectbox("Category", list(ASSET_CATEGORIES.keys()))
     sub_options = ASSET_CATEGORIES[cat_select]
     with st.form("reg_form", clear_on_submit=True):
@@ -128,20 +128,19 @@ elif menu == "📝 Register New Asset":
         qty = c1.number_input("Total Quantity", min_value=1)
         u_cost = c2.number_input("Unit Cost", min_value=0.0)
         unit = c1.selectbox("Unit", ["Nos", "Set", "Units", "Meters"])
-        e_life = c2.number_input("Expected Life (Yrs)", min_value=1)
-        c_life = c1.number_input("Current Age (Yrs)", min_value=0)
+        e_life = c1.number_input("Expected Life (Yrs)", min_value=1)
+        c_life = c2.number_input("Current Age (Yrs)", min_value=0)
         
         if st.form_submit_button("✅ Register Hardware"):
-            # Empty string for Asset Code column to maintain sheet structure without visible input
+            # Status defaults to Functional, Asset Code column left empty ("")
             inv_ws.append_row([cat_select, sub_select, "", unit, qty, "Functional", u_cost, qty*u_cost, e_life, c_life, qty, 0])
-            st.success("Asset registered.")
+            st.success("Asset recorded in Inventory.")
             st.rerun()
 
 # MODULE: CONDITIONAL ASSESSMENT
 elif menu == "🔎 Conditional Assessment":
     st.subheader("Manual Quantity Assessment")
     if not df_inv.empty:
-        # Asset Code column removed from view
         df_edit = df_inv[["Category", "Asset Name", "Quantity", "Functional Qty", "Non-Functional Qty"]].copy()
         
         edited_df = st.data_editor(
@@ -166,23 +165,31 @@ elif menu == "🔎 Conditional Assessment":
                         inv_ws.update_cell(row_idx, 6, new_status)
                         inv_ws.update_cell(row_idx, 11, int(row['Functional Qty']))
                         inv_ws.update_cell(row_idx, 12, int(row['Non-Functional Qty']))
-                st.success("Updates successful!")
+                st.success("Quantities updated successfully!")
                 st.rerun()
 
 # MODULE: MAINTENANCE LOG
 elif menu == "🛠️ Maintenance Log":
-    st.subheader("Maintenance Entry")
+    st.subheader("🛠️ Log Maintenance Event")
     if not df_inv.empty:
         with st.form("m_form", clear_on_submit=True):
-            # Selection now based on Asset Name instead of Code
             m_target = st.selectbox("Select Asset Name", df_inv["Asset Name"].unique())
+            
+            c1, c2, c3 = st.columns(3)
+            m_qty = c1.number_input("Maintenance Qty", min_value=1)
+            m_unit = c2.selectbox("Unit", ["Nos", "Set", "Units", "Meters"])
+            m_loc = c3.text_input("Specific Location (e.g. KM 12)")
+            
             m_cause = st.selectbox("Root Cause", ["Wear and Tear", "Power Surge", "Lack of Service", "Environmental", "Accidental"])
-            m_desc = st.text_area("Details")
-            m_cost = st.number_input("Repair Cost", min_value=0.0)
-            if st.form_submit_button("💾 Save Record"):
-                maint_ws.append_row([m_target, str(datetime.date.today()), m_cause, m_desc, m_cost])
-                st.success("Log recorded.")
-                st.rerun()
+            m_desc = st.text_area("Work Description")
+            m_cost = st.number_input("Service Cost", min_value=0.0)
+            
+            if st.form_submit_button("💾 Save Maintenance Record"):
+                # Appends: Name, Date, Qty, Unit, Location, Cause, Description, Cost
+                maint_ws.append_row([m_target, str(datetime.date.today()), m_qty, m_unit, m_loc, m_cause, m_desc, m_cost])
+                st.success(f"Log saved for {m_target} at {m_loc}.")
+                st.rerun()rerun()
+
 
 
 
