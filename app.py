@@ -67,7 +67,7 @@ with st.sidebar:
     menu = st.radio("Select Module", ["📊 Dashboard", "📝 Register New Asset", "🔎 Conditional Assessment", "🛠️ Maintenance Log"])
     st.divider()
     st.caption("Addis Ababa-Adama Expressway")
-    st.info("System: AAE-EMS v7.5")
+    st.info("System: AAE-EMS v7.8")
 
 # --- 4. DATA HANDLING & CRASH PREVENTION ---
 sh = init_connection()
@@ -105,7 +105,7 @@ if menu == "📊 Dashboard":
         func_q = df_inv['Functional Qty'].sum() if 'Functional Qty' in df_inv.columns else 0
         health_pct = (func_q / total_q * 100) if total_q > 0 else 0
         m2.metric("Operational Health", f"{health_pct:.1f}%")
-        m3.metric("Critical Failures", int(df_inv['Non-Functional Qty'].sum()), delta_color="normal")
+        m3.metric("Critical Failures", int(df_inv['Non-Functional Qty'].sum()), delta_color="inverse")
         aging = len(df_inv[df_inv['Current Life'] >= df_inv['Expected Life']]) if 'Current Life' in df_inv.columns else 0
         m4.metric("Aging Alerts", aging)
 
@@ -113,10 +113,16 @@ if menu == "📊 Dashboard":
         st.subheader("📊 System Health by Category")
         cat_summary = df_inv.groupby('Category').agg({'Functional Qty': 'sum', 'Quantity': 'sum'}).reset_index()
         cat_summary['Health %'] = (cat_summary['Functional Qty'] / cat_summary['Quantity'] * 100).round(1)
+        
+        # Horizontal Bar Chart - Green Theme
         fig = px.bar(cat_summary.sort_values('Health %'), x='Health %', y='Category', orientation='h',
-                     color='Health %', color_continuous_scale='RdYlGn', range_x=[0, 100], text='Health %')
+                     range_x=[0, 100], text='Health %')
+        fig.update_traces(marker_color='#22C55E') # Emerald Green
         fig.update_layout(height=400, margin=dict(l=20, r=20, t=10, b=10))
         st.plotly_chart(fig, use_container_width=True)
+        
+        with st.expander("🔍 View Subsystem Details"):
+            st.dataframe(df_inv[['Category', 'Asset Name', 'Quantity', 'Functional Qty', 'Non-Functional Qty']], use_container_width=True)
     else:
         st.info("Inventory is empty.")
 
@@ -178,7 +184,7 @@ elif menu == "🔎 Conditional Assessment":
 elif menu == "🛠️ Maintenance Log":
     st.subheader("🛠️ Log Maintenance")
     if not df_inv.empty:
-        m_cat = st.selectbox("Category", sorted(df_inv["Category"].unique()))
+        m_cat = st.selectbox("Category Filter", sorted(df_inv["Category"].unique()))
         filtered_sub = df_inv[df_inv["Category"] == m_cat]["Asset Name"].unique()
         with st.form("m_form", clear_on_submit=True):
             m_target = st.selectbox("Subsystem", filtered_sub)
@@ -190,6 +196,7 @@ elif menu == "🛠️ Maintenance Log":
                 maint_ws.append_row([m_cat, m_target, str(datetime.date.today()), m_qty, m_unit, m_loc, m_cause, m_desc, m_cost])
                 st.success("Log saved.")
                 st.rerun()
+
 
 
 
