@@ -22,7 +22,7 @@ ASSET_CATEGORIES = {
 
 # --- 2. AUTH & CONNECTION ---
 def init_connection():
-    scope = ["https://imgur.com/a/95tvVob", "https://www.googleapis.com/auth/drive"]
+    scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     try:
         creds_dict = st.secrets["gcp_service_account"]
         creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
@@ -61,7 +61,7 @@ st.markdown("""
 
 # Sidebar Navigation
 with st.sidebar:
-    st.image("https://img.icons8.com/fluency/96/highway.png", width=80)
+    st.image("https://imgur.com/a/95tvVob", width=80)
     st.title("Main Menu")
     menu = st.radio("Select Module", ["📊 Dashboard", "📝 Register New Asset", "🔎 Conditional Assessment", "🛠️ Maintenance Log"])
     st.divider()
@@ -182,6 +182,7 @@ elif menu == "🛠️ Maintenance Log":
                 maint_ws.append_row([m_cat, m_target, str(datetime.date.today()), m_qty, m_unit, m_loc, m_cause, m_desc, m_cost])
                 st.success(f"Log saved: {m_cat} > {m_target}")
                 st.rerun()
+
 
 
 
