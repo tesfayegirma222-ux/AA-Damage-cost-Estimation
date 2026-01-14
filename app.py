@@ -5,22 +5,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 import datetime
 
-# --- 1. CONFIGURATION ---
-ASSET_CATEGORIES = {
-    "Electric Power Source": ["Electric Utility", "Generator"],
-    "Electric Power Distribution": ["ATS", "Breakers", "Power Cable", "Main Breakers", "DP"],
-    "UPS System": ["UPS", "UPS Battery"],
-    "CCTV System": ["Lane Camera", "Booth Camera", "Road Camera", "Plaza Camera"],
-    "Auto-Railing System": ["Barrier Gate", "Controller"],
-    "Automatic Voltage Regulator": ["AVR"],
-    "HVAC System": ["Air Conditioning System"],
-    "Illumination System": ["High Mast Light", "Compound Light", "Road Light", "Booth Light", "Plaza Light"],
-    "Electronic Display System": ["Canopy Light", "VMS", "LED Notice Board", "Fog Light", "Money Fee Display", "Passage Signal Lamp"],
-    "Pump System": ["Surface Water Pump", "Submersible Pump"],
-    "WIM System": ["Weight-In-Motion Sensor", "WIM Controller"]
-}
-
-# --- 2. AUTH & CONNECTION ---
+# --- 1. AUTH & CONNECTION ---
 def init_connection():
     scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     try:
@@ -33,136 +18,111 @@ def init_connection():
         st.error(f"Configuration Error: {e}")
         st.stop()
 
-# --- 3. UI THEME ---
+# --- 2. UI THEME ---
 st.set_page_config(page_title="AAE Asset Portal", layout="wide")
 st.markdown("""
     <style>
-    .main-header { background-color: #1E3A8A; padding: 25px; border-radius: 12px; color: white; text-align: center; margin-bottom: 25px; }
-    .stMetric { background-color: #ffffff; border-left: 5px solid #1E3A8A; padding: 15px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+    .main-header { background-color: #1E3A8A; padding: 20px; border-radius: 10px; color: white; text-align: center; }
     </style>
     <div class="main-header">
         <h1>Addis Ababa-Adama Expressway</h1>
-        <p style='font-size: 1.2rem;'>Electromechanical Asset Management System</p>
+        <p>Asset Operational Status Management</p>
     </div>
     """, unsafe_allow_html=True)
 
-with st.sidebar:
-    st.image("https://img.icons8.com/fluency/96/highway.png", width=100)
-    st.title("Main Menu")
-    menu = st.radio("Select Module", ["📊 Dashboard", "📝 Register New Asset", "🔎 Conditional Assessment", "🛠️ Maintenance Log"])
-    st.divider()
-    st.info("System: AAE-EMS v13.0 (Connected)")
-
-# --- 4. DATA HANDLING (SYNCHRONIZED) ---
 sh = init_connection()
 inv_ws = sh.worksheet("Inventory")
 
-def get_safe_data():
+# --- 3. DATA CLEANING & LOADING ---
+def get_cleaned_data():
     data = inv_ws.get_all_values()
     if not data: return pd.DataFrame()
     
+    # Clean headers to prevent KeyErrors (removes hidden spaces)
     headers = [str(h).strip() for h in data[0]]
     df = pd.DataFrame(data[1:], columns=headers)
     
-    # Ensure all required health columns exist
-    req_cols = ['Category', 'Asset Name', 'Quantity', 'Functional Qty', 'Non-Functional Qty', 'Total Value', 'Current Age', 'Expected Life']
-    for col in req_cols:
+    # Ensure columns exist and are numeric
+    cols = ['Quantity', 'Functional Qty', 'Non-Functional Qty', 'Total Value', 'Current Age', 'Expected Life']
+    for col in cols:
         if col not in df.columns: df[col] = 0
-            
-    # Numeric conversion for calculation
-    num_cols = ['Quantity', 'Functional Qty', 'Non-Functional Qty', 'Total Value', 'Current Age', 'Expected Life']
-    for col in num_cols:
         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
     return df
 
-df_inv = get_safe_data()
+df_inv = get_cleaned_data()
 
-# --- 5. MODULE LOGIC ---
+# --- 4. NAVIGATION ---
+menu = st.sidebar.radio("Module", ["📊 Dashboard", "🔎 Conditional Assessment"])
 
-# DASHBOARD: CONNECTED TO ASSESSMENT
+# --- 5. DASHBOARD (CONNECTED TO UPDATES) ---
 if menu == "📊 Dashboard":
     if not df_inv.empty:
-        # TOP METRICS
-        m1, m2, m3, m4 = st.columns(4)
-        total_q = df_inv['Quantity'].sum()
-        func_q = df_inv['Functional Qty'].sum()
-        health_pct = (func_q / total_q * 100) if total_q > 0 else 0
+        m1, m2, m3 = st.columns(3)
+        total = df_inv['Quantity'].sum()
+        func = df_inv['Functional Qty'].sum()
+        health = (func / total * 100) if total > 0 else 0
         
-        m1.metric("Enterprise Value", f"${df_inv['Total Value'].sum():,.2f}")
-        m2.metric("Operational Health", f"{health_pct:.1f}%")
-        m3.metric("Broken Assets", int(df_inv['Non-Functional Qty'].sum()))
-        m4.metric("Aging Alerts", len(df_inv[df_inv['Current Age'] >= df_inv['Expected Life']]))
+        m1.metric("Operational Health", f"{health:.1f}%")
+        m2.metric("Total Functional", int(func))
+        m3.metric("Total Broken", int(df_inv['Non-Functional Qty'].sum()))
 
-        st.divider()
-        st.subheader("📊 System Health (Live Operational Status)")
+        st.subheader("📊 System Health Status")
+        # Horizontal Bar Chart (Green)
+        cat_sum = df_inv.groupby('Category').agg({'Functional Qty': 'sum', 'Quantity': 'sum'}).reset_index()
+        cat_sum['Health %'] = (cat_sum['Functional Qty'] / cat_sum['Quantity'].replace(0, 1) * 100).round(1)
         
-        # AGGREGATE HEALTH PER CATEGORY (Connected to Assessment edits)
-        cat_sum = df_inv.groupby('Category').agg({
-            'Functional Qty': 'sum', 
-            'Quantity': 'sum'
-        }).reset_index()
-        
-        # Calculate health percentage dynamically
-        cat_sum['Health Status %'] = (cat_sum['Functional Qty'] / cat_sum['Quantity'].replace(0, 1) * 100).round(1)
-        
-        # Image of a system health dashboard with green bar charts showing percentage completion
-        
-        
-        # Horizontal Green Bar Chart
-        fig = px.bar(
-            cat_sum.sort_values('Health Status %'), 
-            x='Health Status %', 
-            y='Category', 
-            orientation='h', 
-            range_x=[0, 100], 
-            text='Health Status %',
-            color_discrete_sequence=['#22C55E']
-        )
-        fig.update_traces(texttemplate='%{text}%', textposition='outside')
-        fig.update_layout(xaxis_title="Operational Availability (%)", yaxis_title=None, height=450)
+        fig = px.bar(cat_sum.sort_values('Health %'), x='Health %', y='Category', orientation='h', 
+                     range_x=[0, 100], text='Health %', color_discrete_sequence=['#22C55E'])
         st.plotly_chart(fig, use_container_width=True)
     else:
-        st.info("Inventory is empty.")
+        st.info("No data available.")
 
-# CONDITIONAL ASSESSMENT: THE DATA SOURCE
+# --- 6. CONDITIONAL ASSESSMENT (FIXED SAVE LOGIC) ---
 elif menu == "🔎 Conditional Assessment":
-    st.subheader("🔎 Edit Operational Quantities")
-    
+    st.subheader("🔎 Update Asset Quantities")
+    st.info("Edit the 'Functional ✅' and 'Broken ❌' columns, then click Save.")
+
     if not df_inv.empty:
-        edit_cols = ["Category", "Asset Name", "Quantity", "Functional Qty", "Non-Functional Qty"]
+        # We only show the columns necessary for editing
+        display_df = df_inv[['Category', 'Asset Name', 'Quantity', 'Functional Qty', 'Non-Functional Qty']].copy()
         
         edited_df = st.data_editor(
-            df_inv[edit_cols],
+            display_df,
             column_config={
                 "Category": st.column_config.Column(disabled=True),
                 "Asset Name": st.column_config.Column(disabled=True),
-                "Quantity": st.column_config.NumberColumn("Total Registered"),
-                "Functional Qty": st.column_config.NumberColumn("Functional ✅"),
-                "Non-Functional Qty": st.column_config.NumberColumn("Broken ❌"),
+                "Quantity": st.column_config.NumberColumn("Total Registered", min_value=0),
+                "Functional Qty": st.column_config.NumberColumn("Functional ✅", min_value=0),
+                "Non-Functional Qty": st.column_config.NumberColumn("Broken ❌", min_value=0),
             },
             hide_index=True,
             use_container_width=True,
-            key="health_connector_editor"
+            key="qty_editor"
         )
 
-        if st.button("💾 Sync and Update Dashboard"):
-            with st.spinner("Pushing health data to Google Sheets..."):
-                for index, row in edited_df.iterrows():
-                    sheet_row = index + 2
-                    
-                    # Update Total Quantity (Col 5)
-                    inv_ws.update_cell(sheet_row, 5, int(row['Quantity']))
-                    # Update Functional (Col 11)
-                    inv_ws.update_cell(sheet_row, 11, int(row['Functional Qty']))
-                    # Update Non-Functional (Col 12)
-                    inv_ws.update_cell(sheet_row, 12, int(row['Non-Functional Qty']))
-                    
-                    # Force Status Update (Col 6)
-                    new_status = "Functional" if row['Functional Qty'] > 0 else "Non-Functional"
-                    inv_ws.update_cell(sheet_row, 6, new_status)
+        if st.button("💾 Save Changes to Google Sheets"):
+            with st.spinner("Updating records..."):
+                try:
+                    for index, row in edited_df.iterrows():
+                        sheet_row = index + 2 # +1 for header, +1 for index
+                        
+                        # --- IMPORTANT: UPDATE THESE INDICES TO MATCH YOUR SHEET ---
+                        # Column 5: Total Quantity
+                        inv_ws.update_cell(sheet_row, 5, int(row['Quantity']))
+                        # Column 11: Functional Qty
+                        inv_ws.update_cell(sheet_row, 11, int(row['Functional Qty']))
+                        # Column 12: Non-Functional Qty
+                        inv_ws.update_cell(sheet_row, 12, int(row['Non-Functional Qty']))
+                        
+                        # Column 6: Status (Auto-logic)
+                        status = "Functional" if row['Functional Qty'] > 0 else "Non-Functional"
+                        inv_ws.update_cell(sheet_row, 6, status)
 
-                st.success("✅ Records synced! The Dashboard chart is now updated.")
-                st.rerun()
+                    st.success("✅ Saved successfully! Go to Dashboard to see the updated chart.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error saving: {e}")
+
 
 
 
