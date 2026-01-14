@@ -52,28 +52,26 @@ with st.sidebar:
     st.title("Main Menu")
     menu = st.radio("Select Module", ["📊 Dashboard", "📝 Register New Asset", "🔎 Conditional Assessment", "🛠️ Maintenance Log"])
     st.divider()
-    st.info("System: AAE-EMS v11.5")
+    st.info("System: AAE-EMS v12.0")
 
 # --- 4. DATA HANDLING ---
 sh = init_connection()
 inv_ws = sh.worksheet("Inventory")
-maint_ws = sh.worksheet("Maintenance")
 
-def get_safe_data(worksheet):
-    data = worksheet.get_all_values()
+def get_safe_data():
+    data = inv_ws.get_all_values()
     if not data: return pd.DataFrame()
     headers = [str(h).strip() for h in data[0]]
-    df = pd.DataFrame(data[1:], columns=headers) if len(data) > 1 else pd.DataFrame(columns=headers)
+    df = pd.DataFrame(data[1:], columns=headers)
     
+    # Numeric Safety
     num_cols = ['Quantity', 'Unit Cost', 'Total Value', 'Expected Life', 'Current Age', 'Functional Qty', 'Non-Functional Qty']
     for col in num_cols:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-        else:
-            df[col] = 0
     return df
 
-df_inv = get_safe_data(inv_ws)
+df_inv = get_safe_data()
 
 # --- 5. MODULE LOGIC ---
 
@@ -82,110 +80,72 @@ if menu == "📊 Dashboard":
     if not df_inv.empty:
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Enterprise Value", f"${df_inv['Total Value'].sum():,.2f}")
+        
         total_q = df_inv['Quantity'].sum()
         func_q = df_inv['Functional Qty'].sum()
         health_pct = (func_q / total_q * 100) if total_q > 0 else 0
         m2.metric("Operational Health", f"{health_pct:.1f}%")
-        m3.metric("Critical Failures", int(df_inv['Non-Functional Qty'].sum()), delta_color="inverse")
+        
+        m3.metric("Broken Assets", int(df_inv['Non-Functional Qty'].sum()))
         m4.metric("Aging Alerts", len(df_inv[df_inv['Current Age'] >= df_inv['Expected Life']]))
 
         st.divider()
-        st.subheader("📊 System Health (Horizontal Status)")
+        st.subheader("📊 System Health (Operational Status)")
         cat_sum = df_inv.groupby('Category').agg({'Functional Qty': 'sum', 'Quantity': 'sum'}).reset_index()
         cat_sum['Health %'] = (cat_sum['Functional Qty'] / (cat_sum['Quantity'].replace(0,1)) * 100).round(1)
         
         fig = px.bar(cat_sum.sort_values('Health %'), x='Health %', y='Category', orientation='h', 
                      range_x=[0, 100], text='Health %', color_discrete_sequence=['#22C55E'])
         fig.update_traces(texttemplate='%{text}%', textposition='outside')
-        fig.update_layout(xaxis_title="Health Status (%)", yaxis_title=None, height=450)
         st.plotly_chart(fig, use_container_width=True)
-        
-        st.subheader("💰 Asset Lifecycle Details")
-        st.dataframe(df_inv[['Category', 'Asset Name', 'Unit Cost', 'Total Value', 'Expected Life', 'Current Age']], use_container_width=True)
     else:
-        st.info("Inventory is empty.")
+        st.info("No data found.")
 
-# MODULE: CONDITIONAL ASSESSMENT (FIXED SAVE LOGIC)
+# CONDITIONAL ASSESSMENT (FIXED SAVE)
 elif menu == "🔎 Conditional Assessment":
     st.subheader("🔎 Edit Operational Quantities")
+    
     if not df_inv.empty:
-        # Use a list to maintain column order for display
-        cols_to_show = ["Category", "Asset Name", "Quantity", "Functional Qty", "Non-Functional Qty"]
+        # Create a copy for editing
+        edit_cols = ["Category", "Asset Name", "Quantity", "Functional Qty", "Non-Functional Qty"]
         
-        # We use a key for the editor to preserve state
+        # DISPLAY DATA EDITOR
         edited_df = st.data_editor(
-            df_inv[cols_to_show],
+            df_inv[edit_cols],
             column_config={
-                "Quantity": st.column_config.NumberColumn("Total", min_value=0),
-                "Functional Qty": st.column_config.NumberColumn("Functional ✅", min_value=0),
-                "Non-Functional Qty": st.column_config.NumberColumn("Broken ❌", min_value=0),
                 "Category": st.column_config.Column(disabled=True),
                 "Asset Name": st.column_config.Column(disabled=True),
+                "Quantity": st.column_config.NumberColumn("Total Registered"),
+                "Functional Qty": st.column_config.NumberColumn("Functional ✅"),
+                "Non-Functional Qty": st.column_config.NumberColumn("Broken ❌"),
             },
-            hide_index=True, 
+            hide_index=True,
             use_container_width=True,
-            key="qty_editor"
+            key="inventory_editor" # Key is essential for state
         )
 
-        if st.button("💾 Save Changes to Inventory"):
-            with st.spinner("Writing updates to Google Sheets..."):
+        if st.button("💾 Save All Quantities"):
+            with st.spinner("Writing to Database..."):
                 try:
-                    # Iterate through the rows and update the Google Sheet directly
                     for index, row in edited_df.iterrows():
-                        # row_idx is index + 2 (1 for header, 1 for 0-indexing)
-                        sheet_row = index + 2
+                        sheet_row = index + 2  # +1 for header, +1 for 0-indexing
                         
-                        # Determine overall status text
-                        status_update = "Functional" if row['Functional Qty'] > 0 else "Non-Functional"
+                        # Update columns: 5=Total Qty, 11=Functional, 12=Non-Functional
+                        inv_ws.update_cell(sheet_row, 5, int(row['Quantity']))
+                        inv_ws.update_cell(sheet_row, 11, int(row['Functional Qty']))
+                        inv_ws.update_cell(sheet_row, 12, int(row['Non-Functional Qty']))
                         
-                        # Sequential updates to match Google Sheet columns:
-                        # Col 5: Quantity | Col 6: Status | Col 11: Functional Qty | Col 12: Non-Functional Qty
-                        updates = [
-                            {'range': f'E{sheet_row}', 'values': [[int(row['Quantity'])]]},
-                            {'range': f'F{sheet_row}', 'values': [[status_update]]},
-                            {'range': f'K{sheet_row}', 'values': [[int(row['Functional Qty'])]]},
-                            {'range': f'L{sheet_row}', 'values': [[int(row['Non-Functional Qty'])]]}
-                        ]
-                        
-                        for update in updates:
-                            inv_ws.update(update['range'], update['values'])
-                    
-                    st.success("✅ Records updated successfully!")
-                    st.rerun() # Refresh to update dashboard
+                        # Auto-update status text (Column 6)
+                        new_status = "Functional" if row['Functional Qty'] > 0 else "Non-Functional"
+                        inv_ws.update_cell(sheet_row, 6, new_status)
+
+                    st.success("✅ Success: Quantities saved to Google Sheets!")
+                    st.rerun()
                 except Exception as e:
-                    st.error(f"Failed to save: {e}")
+                    st.error(f"Save failed: {e}")
+    else:
+        st.warning("Inventory is empty.")
 
-# REGISTER NEW ASSET (UNCHANGED)
-elif menu == "📝 Register New Asset":
-    st.subheader("Asset Registration")
-    cat_select = st.selectbox("Category", list(ASSET_CATEGORIES.keys()))
-    sub_options = ASSET_CATEGORIES[cat_select]
-    with st.form("reg_form", clear_on_submit=True):
-        c1, c2 = st.columns(2)
-        sub_select = c1.selectbox("Subsystem", sub_options)
-        qty = c1.number_input("Total Quantity", min_value=1)
-        u_cost = c2.number_input("Unit Cost", min_value=0.0)
-        e_life = c1.number_input("Expected Life (Yrs)", min_value=1)
-        c_age = c2.number_input("Current Age (Yrs)", min_value=0)
-        if st.form_submit_button("✅ Register Hardware"):
-            inv_ws.append_row([cat_select, sub_select, "", "Nos", qty, "Functional", u_cost, qty*u_cost, e_life, c_age, qty, 0])
-            st.success("Asset recorded.")
-            st.rerun()
-
-# MAINTENANCE LOG (UNCHANGED)
-elif menu == "🛠️ Maintenance Log":
-    st.subheader("🛠️ Log Maintenance")
-    if not df_inv.empty:
-        m_cat = st.selectbox("Category Filter", sorted(df_inv["Category"].unique()))
-        sub_list = df_inv[df_inv["Category"] == m_cat]["Asset Name"].unique()
-        with st.form("m_form", clear_on_submit=True):
-            target = st.selectbox("Subsystem", sub_list)
-            qty = st.number_input("Qty", min_value=1)
-            cost = st.number_input("Repair Cost", min_value=0.0)
-            if st.form_submit_button("💾 Save"):
-                maint_ws.append_row([m_cat, target, str(datetime.date.today()), qty, "Nos", "", "Repair", "General", cost])
-                st.success("Log saved.")
-                st.rerun()
 
 
 
