@@ -52,7 +52,7 @@ with st.sidebar:
     st.title("Main Menu")
     menu = st.radio("Select Module", ["📊 Dashboard", "📝 Register New Asset", "🔎 Conditional Assessment", "🛠️ Maintenance Log"])
     st.divider()
-    st.info("System: AAE-EMS v11.0")
+    st.info("System: AAE-EMS v11.5")
 
 # --- 4. DATA HANDLING ---
 sh = init_connection()
@@ -65,7 +65,6 @@ def get_safe_data(worksheet):
     headers = [str(h).strip() for h in data[0]]
     df = pd.DataFrame(data[1:], columns=headers) if len(data) > 1 else pd.DataFrame(columns=headers)
     
-    # Required numeric columns
     num_cols = ['Quantity', 'Unit Cost', 'Total Value', 'Expected Life', 'Current Age', 'Functional Qty', 'Non-Functional Qty']
     for col in num_cols:
         if col in df.columns:
@@ -78,10 +77,9 @@ df_inv = get_safe_data(inv_ws)
 
 # --- 5. MODULE LOGIC ---
 
-# MODULE: DASHBOARD
+# DASHBOARD
 if menu == "📊 Dashboard":
     if not df_inv.empty:
-        # Metrics
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Enterprise Value", f"${df_inv['Total Value'].sum():,.2f}")
         total_q = df_inv['Quantity'].sum()
@@ -93,19 +91,15 @@ if menu == "📊 Dashboard":
 
         st.divider()
         st.subheader("📊 System Health (Horizontal Status)")
-        
-        # Aggregate Health for Chart
         cat_sum = df_inv.groupby('Category').agg({'Functional Qty': 'sum', 'Quantity': 'sum'}).reset_index()
         cat_sum['Health %'] = (cat_sum['Functional Qty'] / (cat_sum['Quantity'].replace(0,1)) * 100).round(1)
         
-        # Horizontal Green Bar Chart
         fig = px.bar(cat_sum.sort_values('Health %'), x='Health %', y='Category', orientation='h', 
                      range_x=[0, 100], text='Health %', color_discrete_sequence=['#22C55E'])
         fig.update_traces(texttemplate='%{text}%', textposition='outside')
         fig.update_layout(xaxis_title="Health Status (%)", yaxis_title=None, height=450)
         st.plotly_chart(fig, use_container_width=True)
         
-        # Financial Table
         st.subheader("💰 Asset Lifecycle Details")
         st.dataframe(df_inv[['Category', 'Asset Name', 'Unit Cost', 'Total Value', 'Expected Life', 'Current Age']], use_container_width=True)
     else:
@@ -115,10 +109,12 @@ if menu == "📊 Dashboard":
 elif menu == "🔎 Conditional Assessment":
     st.subheader("🔎 Edit Operational Quantities")
     if not df_inv.empty:
-        # Prepare editor
-        df_edit = df_inv[["Category", "Asset Name", "Quantity", "Functional Qty", "Non-Functional Qty"]].copy()
+        # Use a list to maintain column order for display
+        cols_to_show = ["Category", "Asset Name", "Quantity", "Functional Qty", "Non-Functional Qty"]
+        
+        # We use a key for the editor to preserve state
         edited_df = st.data_editor(
-            df_edit,
+            df_inv[cols_to_show],
             column_config={
                 "Quantity": st.column_config.NumberColumn("Total", min_value=0),
                 "Functional Qty": st.column_config.NumberColumn("Functional ✅", min_value=0),
@@ -126,25 +122,40 @@ elif menu == "🔎 Conditional Assessment":
                 "Category": st.column_config.Column(disabled=True),
                 "Asset Name": st.column_config.Column(disabled=True),
             },
-            hide_index=True, use_container_width=True, key="assessment_tool"
+            hide_index=True, 
+            use_container_width=True,
+            key="qty_editor"
         )
 
-        if st.button("💾 Commit Changes to Database"):
-            with st.spinner("Syncing with Google Sheets..."):
-                for index, row in edited_df.iterrows():
-                    row_idx = index + 2
-                    status_text = "Functional" if row['Functional Qty'] > 0 else "Non-Functional"
+        if st.button("💾 Save Changes to Inventory"):
+            with st.spinner("Writing updates to Google Sheets..."):
+                try:
+                    # Iterate through the rows and update the Google Sheet directly
+                    for index, row in edited_df.iterrows():
+                        # row_idx is index + 2 (1 for header, 1 for 0-indexing)
+                        sheet_row = index + 2
+                        
+                        # Determine overall status text
+                        status_update = "Functional" if row['Functional Qty'] > 0 else "Non-Functional"
+                        
+                        # Sequential updates to match Google Sheet columns:
+                        # Col 5: Quantity | Col 6: Status | Col 11: Functional Qty | Col 12: Non-Functional Qty
+                        updates = [
+                            {'range': f'E{sheet_row}', 'values': [[int(row['Quantity'])]]},
+                            {'range': f'F{sheet_row}', 'values': [[status_update]]},
+                            {'range': f'K{sheet_row}', 'values': [[int(row['Functional Qty'])]]},
+                            {'range': f'L{sheet_row}', 'values': [[int(row['Non-Functional Qty'])]]}
+                        ]
+                        
+                        for update in updates:
+                            inv_ws.update(update['range'], update['values'])
                     
-                    # Target Columns: 5=Qty, 6=Status, 11=Functional Qty, 12=Non-Functional Qty
-                    inv_ws.update_cell(row_idx, 5, int(row['Quantity']))
-                    inv_ws.update_cell(row_idx, 6, status_text)
-                    inv_ws.update_cell(row_idx, 11, int(row['Functional Qty']))
-                    inv_ws.update_cell(row_idx, 12, int(row['Non-Functional Qty']))
-                
-                st.success("Successfully updated counts! Dashboard will now reflect changes.")
-                st.rerun()
+                    st.success("✅ Records updated successfully!")
+                    st.rerun() # Refresh to update dashboard
+                except Exception as e:
+                    st.error(f"Failed to save: {e}")
 
-# [The Register New Asset and Maintenance Log modules remain unchanged below]
+# REGISTER NEW ASSET (UNCHANGED)
 elif menu == "📝 Register New Asset":
     st.subheader("Asset Registration")
     cat_select = st.selectbox("Category", list(ASSET_CATEGORIES.keys()))
@@ -161,6 +172,7 @@ elif menu == "📝 Register New Asset":
             st.success("Asset recorded.")
             st.rerun()
 
+# MAINTENANCE LOG (UNCHANGED)
 elif menu == "🛠️ Maintenance Log":
     st.subheader("🛠️ Log Maintenance")
     if not df_inv.empty:
@@ -174,6 +186,7 @@ elif menu == "🛠️ Maintenance Log":
                 maint_ws.append_row([m_cat, target, str(datetime.date.today()), qty, "Nos", "", "Repair", "General", cost])
                 st.success("Log saved.")
                 st.rerun()
+
 
 
 
