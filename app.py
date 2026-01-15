@@ -28,6 +28,7 @@ def init_connection():
         client = gspread.authorize(creds)
         url = st.secrets["SHEET_URL"]
         sh = client.open_by_url(url)
+        # Force look for the 'inventory' sheet
         all_sheets = [ws.title for ws in sh.worksheets()]
         target = next((s for s in all_sheets if "inventory" in s.lower()), all_sheets[0])
         return sh.worksheet(target)
@@ -35,11 +36,11 @@ def init_connection():
         st.error(f"Spreadsheet Connection Error: {e}")
         return None
 
-inv_ws = init_connection()
-
-# --- 3. STANDARDIZED DATA LOADING ---
+# --- 3. DATA ENGINE (FIXED DISPLAY ISSUE) ---
 def get_standardized_data(worksheet):
     if not worksheet: return pd.DataFrame(), []
+    
+    # We clear the cache to ensure the new registered items show up immediately
     data = worksheet.get_all_values()
     if len(data) < 1: return pd.DataFrame(), []
     
@@ -49,35 +50,40 @@ def get_standardized_data(worksheet):
         "Functional Qty", "Non-Functional Qty"
     ]
     
-    raw_df = pd.DataFrame(data[1:], columns=data[0]).dropna(how='all')
+    # Convert to DataFrame - using the first row of sheet as actual headers
+    df = pd.DataFrame(data[1:], columns=data[0])
     
+    # Clean column names in DF to match Official Headers
     mapping = {}
     for official in OFFICIAL_HEADERS:
-        for raw in raw_df.columns:
-            if official.lower().replace(" ", "") in raw.lower().replace(" ", ""):
+        for raw in df.columns:
+            if official.lower().replace(" ", "") == str(raw).lower().replace(" ", ""):
                 mapping[raw] = official
                 break
     
-    df = raw_df.rename(columns=mapping)
+    df = df.rename(columns=mapping)
+    
+    # Fill missing columns to prevent KeyError
     for col in OFFICIAL_HEADERS:
         if col not in df.columns:
             df[col] = 0 if any(x in col for x in ["Qty", "Cost", "Value", "Life", "Age"]) else ""
     
-    df = df[OFFICIAL_HEADERS]
+    # Ensure math columns are numeric
     num_cols = ["Total Qty", "Unit Cost", "Total Value", "Life", "Age", "Functional Qty", "Non-Functional Qty"]
     for col in num_cols:
         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
             
-    return df, OFFICIAL_HEADERS
-
-df_inv, HEADERS = get_standardized_data(inv_ws)
+    return df[OFFICIAL_HEADERS], OFFICIAL_HEADERS
 
 # --- 4. UI SETUP ---
 st.set_page_config(page_title="AAE Asset Portal", layout="wide")
+inv_ws = init_connection()
+df_inv, HEADERS = get_standardized_data(inv_ws)
+
 st.markdown("""
     <div style="background-color: #1E3A8A; padding: 20px; border-radius: 12px; color: white; text-align: center; margin-bottom: 25px;">
         <h1 style="margin:0;">Addis Ababa-Adama Expressway</h1>
-        <p style="margin:0;">Electromechanical Equipment Master Database</p>
+        <p style="margin:0;">Electromechanical Master Database</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -93,54 +99,47 @@ if menu == "📊 Smart Dashboard":
         c1, c2, c3 = st.columns(3)
         c1.metric("System Health", f"{health:.1f}%")
         c2.metric("Total Operational", int(f_qty))
-        c3.metric("Maintenance Required", int(t_qty - f_qty))
+        c3.metric("Maintenance Needed", int(t_qty - f_qty))
 
         st.divider()
         fig = px.bar(df_inv.groupby("Category").sum(numeric_only=True).reset_index(), 
-                     x="Category", y=["Functional Qty", "Total Qty"], barmode='group',
-                     title="Asset Readiness by Category")
+                     x="Category", y=["Functional Qty", "Total Qty"], barmode='group')
         st.plotly_chart(fig, use_container_width=True)
 
-# --- 6. INVENTORY STATUS ---
+# --- 6. INVENTORY STATUS (FIXED VIEW) ---
 elif menu == "🔎 Inventory Operational Status":
-    st.subheader("🔎 Master Database - Full Asset Information")
+    st.subheader("🔎 Master Database - Registered Assets")
     
-    search = st.text_input("Search (Category, Subsystem, or Code)...", "")
-    filtered_df = df_inv[df_inv.apply(lambda row: row.astype(str).str.contains(search, case=False).any(), axis=1)]
+    if df_inv.empty:
+        st.warning("No data found. If you just registered an item, wait 2 seconds and click 'Register' again to refresh.")
+    else:
+        search = st.text_input("Search Assets...", "")
+        filtered_df = df_inv[df_inv.apply(lambda row: row.astype(str).str.contains(search, case=False).any(), axis=1)]
 
-    edited_df = st.data_editor(
-        filtered_df,
-        hide_index=True, 
-        use_container_width=True,
-        column_config={
-            "Total Qty": st.column_config.NumberColumn(disabled=True),
-            "Non-Functional Qty": st.column_config.NumberColumn(disabled=True),
-            "Total Value": st.column_config.NumberColumn("Total Value", format="$%.2f", disabled=True),
-            "Unit Cost": st.column_config.NumberColumn("Unit Cost", format="$%.2f"),
-            "Category": st.column_config.Column(disabled=True),
-            "Subsystem": st.column_config.Column(disabled=True)
-        }
-    )
+        edited_df = st.data_editor(
+            filtered_df,
+            hide_index=True, 
+            use_container_width=True,
+            column_config={
+                "Total Qty": st.column_config.NumberColumn(disabled=True),
+                "Non-Functional Qty": st.column_config.NumberColumn(disabled=True),
+                "Category": st.column_config.Column(disabled=True),
+                "Subsystem": st.column_config.Column(disabled=True)
+            }
+        )
 
-    if st.button("💾 Save Database Changes"):
-        with st.spinner("Pushing data to Cloud..."):
-            for i, row in edited_df.iterrows():
-                sheet_row = int(filtered_df.index[i]) + 2
-                f_val = min(int(row["Functional Qty"]), int(row["Total Qty"]))
-                nf_val = int(row["Total Qty"]) - f_val
-                
-                # Update specific columns
-                inv_ws.update_cell(sheet_row, HEADERS.index("Functional Qty") + 1, f_val)
-                inv_ws.update_cell(sheet_row, HEADERS.index("Non-Functional Qty") + 1, nf_val)
-                inv_ws.update_cell(sheet_row, HEADERS.index("Unit Cost") + 1, float(row["Unit Cost"]))
-                inv_ws.update_cell(sheet_row, HEADERS.index("Total Value") + 1, float(row["Unit Cost"] * row["Total Qty"]))
-                
-            st.success("✅ Master Database Synced!")
-            st.rerun()
+        if st.button("💾 Save Changes"):
+            with st.spinner("Saving..."):
+                for i, row in edited_df.iterrows():
+                    sheet_row = int(filtered_df.index[i]) + 2
+                    f_val = min(int(row["Functional Qty"]), int(row["Total Qty"]))
+                    inv_ws.update_cell(sheet_row, HEADERS.index("Functional Qty") + 1, f_val)
+                    inv_ws.update_cell(sheet_row, HEADERS.index("Non-Functional Qty") + 1, int(row["Total Qty"]) - f_val)
+                st.success("✅ Synced!"); st.rerun()
 
-# --- 7. REGISTRATION ---
+# --- 7. REGISTRATION (FIXED REDIRECT) ---
 elif menu == "📝 Register New Equipment":
-    st.subheader("📝 Asset Onboarding")
+    st.subheader("📝 New Asset Onboarding")
     cat = st.selectbox("Category", list(EQUIPMENT_STRUCTURE.keys()))
     sub = st.selectbox("Subsystem", EQUIPMENT_STRUCTURE[cat])
     
@@ -150,15 +149,15 @@ elif menu == "📝 Register New Equipment":
         unit = c2.selectbox("Unit", ["Nos", "Sets", "Meters"])
         qty = c3.number_input("Quantity", min_value=1, step=1)
         
-        c4, c5 = st.columns(2)
-        cost = c4.number_input("Unit Cost", min_value=0.0)
-        life = c5.number_input("Life Expectancy (Years)", value=10)
+        cost = st.number_input("Unit Cost", min_value=0.0)
         
         if st.form_submit_button("✅ Add Asset"):
-            new_row = [cat, sub, code, unit, qty, "Functional", cost, (qty*cost), life, 0, qty, 0]
+            # Ensure the row matches your Google Sheet column order exactly
+            new_row = [cat, sub, code, unit, qty, "Operational", cost, (qty*cost), 10, 0, qty, 0]
             inv_ws.append_row(new_row)
-            st.success("Registered successfully.")
-            st.rerun()
+            st.success(f"Registered {sub}. Moving to inventory view...")
+            st.rerun() # This force-refreshes the whole app so the item appears
+
 
 
 
