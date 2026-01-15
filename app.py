@@ -35,13 +35,13 @@ def init_connection():
 
 inv_ws = init_connection()
 
-# --- 3. DATA ENGINE (FIXES THE "COLUMN NOT FOUND" ERROR) ---
+# --- 3. DATA ENGINE ---
 def load_data(worksheet):
     if not worksheet: return pd.DataFrame()
     data = worksheet.get_all_values()
     if len(data) < 1: return pd.DataFrame()
     
-    # FIND THE HEADER ROW (Skips empty rows at the top)
+    # Find Header Row
     header_idx = 0
     for i, row in enumerate(data):
         if any(cell.strip() for cell in row):
@@ -61,12 +61,9 @@ def load_data(worksheet):
             clean_headers.append(h)
             
     df = pd.DataFrame(data[header_idx+1:], columns=clean_headers)
-    
-    # Convert numeric columns
     for col in df.columns:
         if any(k in col.lower() for k in ['qty', 'total', 'cost', 'value', 'life', 'age', 'func', 'non']):
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-            
     return df
 
 # --- 4. UI SETUP ---
@@ -76,30 +73,62 @@ df = load_data(inv_ws)
 st.markdown("""
     <div style="background: #1E3A8A; color: white; padding: 15px; border-radius: 10px; text-align: center; margin-bottom: 20px;">
         <h2 style="margin:0;">Addis Ababa-Adama Expressway</h2>
-        <p style="margin:0;">Electromechanical Master Database (Live Sync)</p>
+        <p style="margin:0;">Master Asset Database (Live Sync with Delete Control)</p>
     </div>
 """, unsafe_allow_html=True)
 
 menu = st.sidebar.radio("Navigation", ["🔎 Inventory Operational Status", "📝 Register New Equipment", "📊 Dashboard"])
 
-# --- 5. MODULE: INVENTORY OPERATIONAL STATUS ---
+# --- 5. MODULE: INVENTORY OPERATIONAL STATUS (SAVE & DELETE) ---
 if menu == "🔎 Inventory Operational Status":
-    st.subheader("🔎 Master Registry & Operational Health")
+    st.subheader("🔎 Master Registry Management")
+    
     if df.empty:
-        st.warning("No data found. Please ensure your Google Sheet has headers in the first row.")
+        st.warning("Database is empty or headers not found.")
     else:
+        # Add Selector for Deletion
+        df_edit = df.copy()
+        df_edit.insert(0, "🗑️", False)
+
         search = st.text_input("Search Assets...", "")
-        mask = df.apply(lambda row: row.astype(str).str.contains(search, case=False).any(), axis=1)
-        display_df = df[mask]
+        mask = df_edit.apply(lambda row: row.astype(str).str.contains(search, case=False).any(), axis=1)
+        display_df = df_edit[mask]
 
-        edited_df = st.data_editor(display_df, hide_index=True, use_container_width=True, num_rows="dynamic")
+        edited_df = st.data_editor(
+            display_df,
+            hide_index=True, 
+            use_container_width=True,
+            num_rows="fixed",
+            column_config={"🗑️": st.column_config.CheckboxColumn("Delete?", help="Select rows to remove")}
+        )
 
-        if st.button("💾 Sync Updates to Google Sheet"):
+        c1, c2 = st.columns([1, 1])
+        
+        if c1.button("💾 Save All Changes"):
             with st.spinner("Syncing..."):
+                q_c = next((c for c in df.columns if 'total' in c.lower() or 'qty' in c.lower()), None)
+                f_c = next((c for c in df.columns if 'func' in c.lower()), None)
+                n_c = next((c for c in df.columns if 'non' in c.lower()), None)
+
                 for i, row in edited_df.iterrows():
                     sheet_row = int(display_df.index[i]) + 2
-                    inv_ws.update(range_name=f"A{sheet_row}", values=[row.tolist()])
-                st.success("✅ Database Updated!"); st.rerun()
+                    if q_c and f_c and n_c:
+                        row[n_c] = row[q_c] - row[f_c]
+                    # Drop the checkbox column before saving
+                    row_to_save = row.drop("🗑️").tolist()
+                    inv_ws.update(range_name=f"A{sheet_row}", values=[row_to_save])
+                st.success("Changes synced!"); st.rerun()
+
+        if c2.button("🗑️ Delete Selected Assets", type="primary"):
+            to_delete = edited_df[edited_df["🗑️"] == True].index.tolist()
+            if not to_delete:
+                st.warning("No rows selected for deletion.")
+            else:
+                with st.spinner(f"Deleting {len(to_delete)} items..."):
+                    # Delete from bottom to top to preserve index order
+                    for idx in sorted(to_delete, reverse=True):
+                        inv_ws.delete_rows(idx + 2)
+                    st.success("Records deleted!"); st.rerun()
 
 # --- 6. MODULE: REGISTRATION ---
 elif menu == "📝 Register New Equipment":
@@ -123,41 +152,33 @@ elif menu == "📝 Register New Equipment":
             inv_ws.append_row(new_row)
             st.success("Asset added!"); st.rerun()
 
-# --- 7. DASHBOARD (ENHANCED RESOLVER) ---
+# --- 7. DASHBOARD ---
 elif menu == "📊 Dashboard":
     st.subheader("📊 System Health Analytics")
     if not df.empty:
-        # SEARCH FOR COLUMNS BY KEYWORD
-        c_col = next((c for c in df.columns if 'cat' in c.lower()), None)
-        s_col = next((c for c in df.columns if 'sub' in c.lower()), None)
-        q_col = next((c for c in df.columns if 'qty' in c.lower() or 'total' in c.lower()), None)
-        f_col = next((c for c in df.columns if 'func' in c.lower()), None)
-        n_col = next((c for c in df.columns if 'non' in c.lower()), None)
+        c_c = next((c for c in df.columns if 'cat' in c.lower()), None)
+        s_c = next((c for c in df.columns if 'sub' in c.lower()), None)
+        q_c = next((c for c in df.columns if 'qty' in c.lower() or 'total' in c.lower()), None)
+        n_c = next((c for c in df.columns if 'non' in c.lower()), None)
 
-        if c_col and s_col and q_col:
-            m1, m2, m3 = st.columns(3)
-            total_v = df[q_col].sum()
-            broken_v = df[n_col].sum() if n_col else 0
+        if c_c and s_c and q_c:
+            t_assets = df[q_c].sum()
+            b_assets = df[n_c].sum() if n_c else 0
             
-            m1.metric("Total Assets", int(total_v))
-            m2.metric("Operational", int(total_v - broken_v))
-            m3.metric("Down Units (Maintenance)", int(broken_v), delta_color="inverse")
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Total Assets", int(t_assets))
+            m2.metric("Operational", int(t_assets - b_assets))
+            m3.metric("Maintenance Required", int(b_assets), delta_color="inverse")
 
             st.divider()
-            col_l, col_r = st.columns(2)
-            with col_l:
-                fig_sun = px.sunburst(df, path=[c_col, s_col], values=q_col, title="Asset Hierarchy Distribution")
-                st.plotly_chart(fig_sun, use_container_width=True)
-            with col_r:
-                if f_col:
-                    fig_bar = px.bar(df.groupby(c_col)[[f_col, q_col]].sum().reset_index(), 
-                                     x=c_col, y=[f_col, q_col], barmode='group', title="Functional vs Total")
-                    st.plotly_chart(fig_bar, use_container_width=True)
+            l, r = st.columns(2)
+            with l:
+                st.plotly_chart(px.sunburst(df, path=[c_c, s_c], values=q_c, title="Inventory Distribution"), use_container_width=True)
+            with r:
+                st.plotly_chart(px.bar(df.groupby(c_c)[q_c].sum().reset_index(), x=c_c, y=q_c, title="Category Breakdown"), use_container_width=True)
         else:
-            st.error("🚨 Dashboard Column Error")
-            st.write("Current headers detected in your Google Sheet:")
-            st.code(list(df.columns))
-            st.warning("Please ensure your Google Sheet headers contain words like 'Category', 'Subsystem', and 'Qty'.")
+            st.error("Dashboard Column Error: Headers not recognized.")
+
 
 
 
