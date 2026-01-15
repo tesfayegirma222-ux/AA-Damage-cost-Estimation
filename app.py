@@ -5,7 +5,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 import datetime
 
-# --- 1. CONFIGURATION: ASSET CATEGORIES ---
+# --- 1. CONFIGURATION ---
 ASSET_CATEGORIES = {
     "Electric Power Source": ["Electric Utility", "Generator"],
     "Electric Power Distribution": ["ATS", "Breakers", "Power Cable", "Main Breakers", "DP"],
@@ -50,26 +50,39 @@ sh = init_connection()
 inv_ws = sh.worksheet("Inventory")
 maint_ws = sh.worksheet("Maintenance")
 
+# --- 4. DATA HANDLING (FIXED TO PREVENT KEYERROR) ---
 def get_safe_data(worksheet):
     data = worksheet.get_all_values()
-    if not data: return pd.DataFrame()
+    if not data or len(data) < 1: 
+        return pd.DataFrame()
+    
+    # CLEAN HEADERS: Remove spaces and standardize
     headers = [str(h).strip() for h in data[0]]
     df = pd.DataFrame(data[1:], columns=headers)
+    
+    # DEFINE REQUIRED COLUMNS
+    required_cols = ['Category', 'Asset Name', 'Quantity', 'Functional Qty', 'Non-Functional Qty', 'Total Value', 'Unit Cost', 'Current Age', 'Expected Life']
+    
+    # SAFETY: Add missing columns with 0 if they don't exist in the Sheet
+    for col in required_cols:
+        if col not in df.columns:
+            df[col] = 0
+            
+    # CONVERT NUMBERS: Ensure math works
     num_cols = ['Quantity', 'Functional Qty', 'Non-Functional Qty', 'Total Value', 'Unit Cost', 'Current Age', 'Expected Life']
     for col in num_cols:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+        df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
     return df
 
 df_inv = get_safe_data(inv_ws)
 
-# --- 4. SIDEBAR NAVIGATION ---
+# --- 5. SIDEBAR ---
 with st.sidebar:
     st.image("https://img.icons8.com/fluency/96/highway.png", width=100)
     st.title("AAE-EMS Menu")
     menu = st.radio("Select Module", ["📊 Dashboard", "📝 Register New Asset", "🔎 Conditional Assessment", "🛠️ Maintenance Log"])
 
-# --- 5. MODULE: DASHBOARD ---
+# --- 6. MODULE: DASHBOARD ---
 if menu == "📊 Dashboard":
     if not df_inv.empty:
         m1, m2, m3, m4 = st.columns(4)
@@ -91,10 +104,45 @@ if menu == "📊 Dashboard":
         fig.update_traces(marker_color='#22C55E', texttemplate='%{text}%', textposition='outside')
         st.plotly_chart(fig, use_container_width=True)
 
-        st.subheader("💰 Financial & Lifecycle Breakdown")
+        st.divider()
+        st.subheader("💰 Asset Details")
         st.dataframe(df_inv[['Category', 'Asset Name', 'Unit Cost', 'Total Value', 'Expected Life', 'Current Age']], use_container_width=True)
+    else:
+        st.info("No data available. Please register assets.")
 
-# --- 6. MODULE: REGISTER NEW ASSET ---
+# --- 7. MODULE: CONDITIONAL ASSESSMENT (FIXED SAVE LOGIC) ---
+elif menu == "🔎 Conditional Assessment":
+    st.subheader("🔎 Edit Operational Quantities")
+    if not df_inv.empty:
+        edit_cols = ["Category", "Asset Name", "Quantity", "Functional Qty", "Non-Functional Qty"]
+        edited_df = st.data_editor(df_inv[edit_cols], hide_index=True, use_container_width=True, key="assess_edit")
+
+        if st.button("💾 Save All Changes"):
+            with st.spinner("Finding columns and updating Google Sheets..."):
+                # Dynamically find column indices by name
+                headers_raw = inv_ws.row_values(1)
+                headers_clean = [h.strip() for h in headers_raw]
+                
+                try:
+                    idx_q = headers_clean.index("Quantity") + 1
+                    idx_f = headers_clean.index("Functional Qty") + 1
+                    idx_nf = headers_clean.index("Non-Functional Qty") + 1
+                    idx_s = headers_clean.index("Status") + 1
+                    
+                    for i, row in edited_df.iterrows():
+                        sheet_row = i + 2
+                        status = "Functional" if row['Functional Qty'] > 0 else "Non-Functional"
+                        inv_ws.update_cell(sheet_row, idx_q, int(row['Quantity']))
+                        inv_ws.update_cell(sheet_row, idx_f, int(row['Functional Qty']))
+                        inv_ws.update_cell(sheet_row, idx_nf, int(row['Non-Functional Qty']))
+                        inv_ws.update_cell(sheet_row, idx_s, status)
+                        
+                    st.success("✅ Database synced successfully!")
+                    st.rerun()
+                except ValueError as e:
+                    st.error(f"Error: Could not find required columns in your Sheet headers. Check spelling of 'Functional Qty'.")
+
+# --- 8. MODULE: REGISTER NEW ASSET ---
 elif menu == "📝 Register New Asset":
     st.subheader("Register New Hardware")
     cat_select = st.selectbox("Category", list(ASSET_CATEGORIES.keys()))
@@ -106,39 +154,15 @@ elif menu == "📝 Register New Asset":
         e_life = c1.number_input("Expected Life (Yrs)", min_value=1)
         c_age = c2.number_input("Current Age (Yrs)", min_value=0)
         if st.form_submit_button("✅ Register Asset"):
+            # Append in order: Cat, Sub, Code, Unit, Qty, Status, UCost, TVal, ELife, Age, Func, NonFunc
             inv_ws.append_row([cat_select, sub_select, "", "Nos", qty, "Functional", u_cost, qty*u_cost, e_life, c_age, qty, 0])
-            st.success("Asset added to database.")
+            st.success("Asset added.")
             st.rerun()
 
-# --- 7. MODULE: CONDITIONAL ASSESSMENT (FIXED SAVE LOGIC) ---
-elif menu == "🔎 Conditional Assessment":
-    st.subheader("🔎 Edit Operational Quantities")
-    if not df_inv.empty:
-        edit_cols = ["Category", "Asset Name", "Quantity", "Functional Qty", "Non-Functional Qty"]
-        edited_df = st.data_editor(df_inv[edit_cols], hide_index=True, use_container_width=True, key="assess_edit")
-
-        if st.button("💾 Save All Changes"):
-            with st.spinner("Updating Google Sheets..."):
-                headers_clean = [h.strip() for h in inv_ws.row_values(1)]
-                idx_q = headers_clean.index("Quantity") + 1
-                idx_f = headers_clean.index("Functional Qty") + 1
-                idx_nf = headers_clean.index("Non-Functional Qty") + 1
-                idx_s = headers_clean.index("Status") + 1
-                
-                for i, row in edited_df.iterrows():
-                    sheet_row = i + 2
-                    status = "Functional" if row['Functional Qty'] > 0 else "Non-Functional"
-                    inv_ws.update_cell(sheet_row, idx_q, int(row['Quantity']))
-                    inv_ws.update_cell(sheet_row, idx_f, int(row['Functional Qty']))
-                    inv_ws.update_cell(sheet_row, idx_nf, int(row['Non-Functional Qty']))
-                    inv_ws.update_cell(sheet_row, idx_s, status)
-                st.success("✅ Database synced!")
-                st.rerun()
-
-# --- 8. MODULE: MAINTENANCE LOG ---
+# --- 9. MODULE: MAINTENANCE LOG ---
 elif menu == "🛠️ Maintenance Log":
     st.subheader("🛠️ Log Repair Activity")
-    m_cat = st.selectbox("Category", sorted(df_inv["Category"].unique()))
+    m_cat = st.selectbox("Category Filter", sorted(df_inv["Category"].unique()))
     with st.form("m_form", clear_on_submit=True):
         target = st.selectbox("Subsystem", df_inv[df_inv["Category"] == m_cat]["Asset Name"].unique())
         qty = st.number_input("Qty Fixed", min_value=1)
@@ -147,11 +171,7 @@ elif menu == "🛠️ Maintenance Log":
             maint_ws.append_row([m_cat, target, str(datetime.date.today()), qty, "Nos", "", "Repair", "Routine", cost])
             st.success("Maintenance log saved.")
             st.rerun()
-    
-    st.divider()
-    st.subheader("📜 Recent History")
-    df_m = get_safe_data(maint_ws)
-    if not df_m.empty: st.dataframe(df_m.tail(10), use_container_width=True)
+
 
 
 
