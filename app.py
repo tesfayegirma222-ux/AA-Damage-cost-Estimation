@@ -4,14 +4,22 @@ import plotly.express as px
 import gspread
 from google.oauth2.service_account import Credentials
 
-# --- 1. CONFIG ---
-OFFICIAL_HEADERS = [
-    "Category", "Subsystem", "Asset Code", "Unit", "Total Qty", 
-    "Status", "Unit Cost", "Total Value", "Life", "Age", 
-    "Functional Qty", "Non-Functional Qty"
-]
+# --- 1. AAE OFFICIAL HIERARCHY ---
+AAE_STRUCTURE = {
+    "Electric Power Source": ["Electric Utility", "Generator"],
+    "Electric Power Distribution": ["ATS", "Breakers", "Power Cable", "Main Breakers", "DP"],
+    "UPS System": ["UPS", "UPS Battery"],
+    "CCTV System": ["Lane Camera", "Booth Camera", "Road Camera", "Plaza Camera"],
+    "Auto-Railing System": ["Barrier Gate", "Controller"],
+    "Automatic Voltage Regulator": ["AVR"],
+    "HVAC System": ["Air Conditioning System"],
+    "Illumination System": ["High Mast Light", "Compound Light", "Road Light", "Booth Light", "Plaza Light"],
+    "Electronic Display System": ["Canopy Light", "VMS", "LED Notice Board", "Fog Light", "Money Fee Display", "Passage Signal Lamp"],
+    "Pump System": ["Surface Water Pump", "Submersible Pump"],
+    "WIM System": ["Weight-In-Motion Sensor", "WIM Controller"]
+}
 
-# --- 2. CONNECTION ---
+# --- 2. SECURE CONNECTION ---
 def init_connection():
     scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     try:
@@ -19,103 +27,124 @@ def init_connection():
         creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
         client = gspread.authorize(creds)
         sh = client.open_by_url(st.secrets["SHEET_URL"])
-        # Find sheet containing 'inventory'
         target = next((s for s in sh.worksheets() if "inventory" in s.title.lower()), sh.get_worksheet(0))
         return target
     except Exception as e:
-        st.error(f"Link Error: {e}")
+        st.error(f"Connection Error: {e}")
         return None
 
 inv_ws = init_connection()
 
-# --- 3. THE "FORCE DISPLAY" ENGINE ---
-def load_live_data(worksheet):
+# --- 3. DATA ENGINE (CLEAN & MAP) ---
+def load_data(worksheet):
     if not worksheet: return pd.DataFrame()
+    data = worksheet.get_all_values()
+    if len(data) < 2: return pd.DataFrame()
     
-    # 1. Get raw data
-    raw_data = worksheet.get_all_values()
-    if len(raw_data) < 2: return pd.DataFrame()
-    
-    # 2. Create DataFrame with existing headers
-    df = pd.DataFrame(raw_data[1:], columns=raw_data[0])
-    
-    # 3. Handle Missing Columns (Prevents registered items from disappearing)
-    for col in OFFICIAL_HEADERS:
-        if col not in df.columns:
-            df[col] = "0"
+    # Sanitize Headers for Streamlit (Unique Column Names)
+    raw_headers = data[0]
+    clean_headers = []
+    seen = {}
+    for i, h in enumerate(raw_headers):
+        h = str(h).strip() if h else f"Col_{i}"
+        if h in seen:
+            seen[h] += 1
+            clean_headers.append(f"{h}_{seen[h]}")
+        else:
+            seen[h] = 0
+            clean_headers.append(h)
             
-    # 4. Final Cleanup: Convert empty strings to 0 for math columns
-    num_cols = ["Total Qty", "Unit Cost", "Total Value", "Functional Qty", "Non-Functional Qty"]
+    df = pd.DataFrame(data[1:], columns=clean_headers)
+    
+    # Numeric Cleanup
+    num_cols = ["Total Qty", "Unit Cost", "Total Value", "Life", "Age", "Functional Qty", "Non-Functional Qty"]
     for col in num_cols:
-        df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
             
     return df
 
-# --- 4. UI ---
+# --- 4. UI SETUP ---
 st.set_page_config(page_title="AAE Asset Portal", layout="wide")
-
-# This forces the app to reload the sheet whenever the user switches tabs
-df = load_live_data(inv_ws)
+df = load_data(inv_ws)
 
 st.markdown("""
-    <div style="background: #1E3A8A; color: white; padding: 15px; border-radius: 10px; text-align: center;">
-        <h2>Addis Ababa-Adama Expressway</h2>
-        <p>Master Asset Database (Live Sync)</p>
+    <div style="background: #1E3A8A; color: white; padding: 15px; border-radius: 10px; text-align: center; margin-bottom: 20px;">
+        <h2 style="margin:0;">Addis Ababa-Adama Expressway</h2>
+        <p style="margin:0;">Electromechanical Master Database</p>
     </div>
 """, unsafe_allow_html=True)
 
 menu = st.sidebar.radio("Navigation", ["🔎 Inventory Operational Status", "📝 Register New Equipment", "📊 Dashboard"])
 
-# --- 5. INVENTORY STATUS (PRIMARY FIX) ---
+# --- 5. MODULE: INVENTORY OPERATIONAL STATUS ---
 if menu == "🔎 Inventory Operational Status":
-    st.subheader("🔎 All Registered Assets")
+    st.subheader("🔎 Master Registry & Status")
     
     if df.empty:
-        st.warning("Database is empty or could not be read.")
+        st.warning("No data found.")
     else:
-        # Show a summary count to prove the app sees the data
-        st.info(f"Total Records Found: {len(df)}")
-        
-        search = st.text_input("Search Assets...", "")
-        filtered_df = df[df.apply(lambda row: row.astype(str).str.contains(search, case=False).any(), axis=1)]
+        search = st.text_input("Search (Category, Subsystem, Code, etc.)", "")
+        mask = df.apply(lambda row: row.astype(str).str.contains(search, case=False).any(), axis=1)
+        display_df = df[mask]
 
-        # Display EVERYTHING to ensure nothing is hidden
+        # Professional Data Editor
         edited_df = st.data_editor(
-            filtered_df,
+            display_df,
             hide_index=True, 
             use_container_width=True,
-            num_rows="dynamic" # Allows you to see if extra rows are there
+            column_config={
+                "Total Value": st.column_config.NumberColumn(format="$%.2f", disabled=True),
+                "Unit Cost": st.column_config.NumberColumn(format="$%.2f"),
+                "Total Qty": st.column_config.NumberColumn(disabled=True),
+                "Category": st.column_config.Column(disabled=True),
+                "Subsystem": st.column_config.Column(disabled=True)
+            }
         )
 
-        if st.button("💾 Save Changes"):
-            with st.spinner("Updating Cloud..."):
-                # Save logic maps back to original Sheet Row
+        if st.button("💾 Sync Updates to Google Sheet"):
+            with st.spinner("Updating..."):
                 for i, row in edited_df.iterrows():
-                    sheet_row = int(filtered_df.index[i]) + 2
-                    # Update only Functional/Non-Functional for speed
-                    f_idx = list(df.columns).index("Functional Qty") + 1
-                    nf_idx = list(df.columns).index("Non-Functional Qty") + 1
-                    inv_ws.update_cell(sheet_row, f_idx, row["Functional Qty"])
-                    inv_ws.update_cell(sheet_row, nf_idx, row["Non-Functional Qty"])
-                st.success("✅ Database Updated!"); st.rerun()
+                    sheet_row = int(display_df.index[i]) + 2
+                    # Automatic calculation of Non-Functional and Value
+                    row["Non-Functional Qty"] = int(row["Total Qty"]) - int(row["Functional Qty"])
+                    row["Total Value"] = float(row["Unit Cost"]) * int(row["Total Qty"])
+                    inv_ws.update(range_name=f"A{sheet_row}", values=[row.tolist()])
+                st.success("✅ Database Synced!"); st.rerun()
 
-# --- 6. REGISTRATION (WITH AUTO-REFRESH) ---
+# --- 6. MODULE: REGISTRATION (AAE CATEGORIES) ---
 elif menu == "📝 Register New Equipment":
-    st.subheader("📝 Add New Asset")
-    with st.form("reg_form", clear_on_submit=True):
-        cat = st.text_input("Category")
-        sub = st.text_input("Subsystem")
-        code = st.text_input("Asset Code")
-        qty = st.number_input("Quantity", min_value=1)
-        cost = st.number_input("Unit Cost")
+    st.subheader("📝 New Asset Onboarding")
+    
+    with st.form("aae_reg", clear_on_submit=True):
+        col1, col2 = st.columns(2)
+        category = col1.selectbox("Major Category", list(AAE_STRUCTURE.keys()))
+        subsystem = col2.selectbox("Subsystem", AAE_STRUCTURE[category])
         
-        if st.form_submit_button("✅ Register & Sync"):
-            # Ensure the row exactly matches your sheet columns
-            # Column Order: Category, Subsystem, Asset Code, Unit, Total Qty, Status, Unit Cost, Total Value, Life, Age, Functional Qty, Non-Functional Qty
-            new_row = [cat, sub, code, "Nos", qty, "New", cost, (qty*cost), 10, 0, qty, 0]
+        col3, col4, col5 = st.columns(3)
+        code = col3.text_input("Asset Code (Tag)")
+        unit = col4.selectbox("Unit", ["Nos", "Sets", "Meters", "Km"])
+        qty = col5.number_input("Total Quantity", min_value=1)
+        
+        col6, col7 = st.columns(2)
+        cost = col6.number_input("Unit Cost", min_value=0.0)
+        life = col7.number_input("Useful Life (Years)", value=10)
+        
+        if st.form_submit_button("✅ Add to Master Database"):
+            # Format to match your Google Sheet exactly
+            # Cat, Sub, Code, Unit, Total Qty, Status, Cost, Total Val, Life, Age, Func Qty, Non-Func Qty
+            new_row = [category, subsystem, code, unit, qty, "Functional", cost, (qty*cost), life, 0, qty, 0]
             inv_ws.append_row(new_row)
-            st.success("Asset added to Google Sheet!")
-            st.rerun() # This kills the current session and pulls the new data
+            st.success("Registered Successfully!"); st.rerun()
+
+# --- 7. DASHBOARD ---
+elif menu == "📊 Dashboard":
+    st.subheader("📊 System Health Analytics")
+    if not df.empty:
+        fig = px.sunburst(df, path=['Category', 'Subsystem'], values='Total Qty', 
+                          title="Asset Distribution Hierarchy")
+        st.plotly_chart(fig, use_container_width=True)
+
 
 
 
