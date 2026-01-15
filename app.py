@@ -37,48 +37,56 @@ def init_connection():
 
 inv_ws = init_connection()
 
-# --- 3. ENHANCED DATA ENGINE ---
+# --- 3. DATA ENGINE (FIXES DUPLICATE/EMPTY HEADERS) ---
 def get_full_data(worksheet):
-    if not worksheet: return pd.DataFrame()
+    if not worksheet: return pd.DataFrame(), []
     data = worksheet.get_all_values()
-    if len(data) < 1: return pd.DataFrame()
+    if len(data) < 1: return pd.DataFrame(), []
     
-    headers = [str(h).strip() for h in data[0]]
-    df = pd.DataFrame(data[1:], columns=headers).replace('', "0").dropna(how='all')
+    # --- HEADER SANITIZATION ---
+    raw_headers = data[0]
+    clean_headers = []
+    counts = {}
     
-    # Internal keywords for critical logic (Search/Math)
-    # We rename only for background logic, keeping original headers for display
-    mapping = {
-        'Category': ['category', 'cat'],
-        'Subsystem': ['asset', 'subsystem', 'item'],
-        'Quantity': ['qty', 'total', 'quantity'],
-        'Functional Qty': ['func', 'working', 'operational'],
-        'Non-Functional Qty': ['non', 'broken', 'failed']
-    }
+    for i, h in enumerate(raw_headers):
+        h_str = str(h).strip()
+        if h_str == "": h_str = f"Unnamed_{i}" # Fill empty headers
+        
+        # Handle duplicate names
+        if h_str in counts:
+            counts[h_str] += 1
+            clean_headers.append(f"{h_str}_{counts[h_str]}")
+        else:
+            counts[h_str] = 0
+            clean_headers.append(h_str)
+
+    df = pd.DataFrame(data[1:], columns=clean_headers).dropna(how='all')
     
-    # Helper to find column index by keyword
-    def find_col(keywords):
-        for i, h in enumerate(headers):
-            if any(k in h.lower() for k in keywords):
-                return h
+    # Identify critical columns for Dashboard logic using keywords
+    def find_best_match(keywords):
+        for h in clean_headers:
+            if any(k in h.lower() for k in keywords): return h
         return None
 
-    # Force math columns to numeric
-    for k, v in mapping.items():
-        actual_col = find_col(v)
-        if actual_col:
-            df[actual_col] = pd.to_numeric(df[actual_col], errors='coerce').fillna(0)
-            
-    return df, headers
+    q_col = find_best_match(['qty', 'total', 'quantity'])
+    f_col = find_best_match(['func', 'working', 'operational'])
+    nf_col = find_best_match(['non', 'broken', 'failed'])
 
-df_inv, raw_headers = get_full_data(inv_ws)
+    # Ensure math columns are numeric
+    for col in [q_col, f_col, nf_col]:
+        if col:
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+            
+    return df, clean_headers, q_col, f_col, nf_col
+
+df_inv, headers, Q_COL, F_COL, NF_COL = get_full_data(inv_ws)
 
 # --- 4. UI SETTINGS ---
 st.set_page_config(page_title="AAE Asset Portal", layout="wide")
 st.markdown("""
     <div style="background-color: #1E3A8A; padding: 20px; border-radius: 12px; color: white; text-align: center; margin-bottom: 25px;">
         <h1 style="margin:0;">Addis Ababa-Adama Expressway</h1>
-        <p style="margin:0;">Full Lifecycle Asset Inventory & Operational Status</p>
+        <p style="margin:0;">Electromechanical Asset Management System</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -86,100 +94,79 @@ menu = st.sidebar.radio("Navigation", ["📊 Smart Dashboard", "🔎 Inventory O
 
 # --- 5. DASHBOARD ---
 if menu == "📊 Smart Dashboard":
-    if not df_inv.empty:
-        # Dynamic Metric Search
-        q_col = next((h for h in raw_headers if "qty" in h.lower() or "total" in h.lower()), None)
-        f_col = next((h for h in raw_headers if "func" in h.lower() or "working" in h.lower()), None)
+    if not df_inv.empty and Q_COL and F_COL:
+        total = df_inv[Q_COL].sum()
+        func = df_inv[F_COL].sum()
+        health = (func / total * 100) if total > 0 else 0
         
-        if q_col and f_col:
-            total = df_inv[q_col].sum()
-            func = df_inv[f_col].sum()
-            health = (func / total * 100) if total > 0 else 0
-            
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Overall System Health", f"{health:.1f}%")
-            c2.metric("Total Assets", int(total))
-            c3.metric("Down Assets", int(total - func))
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Overall Health", f"{health:.1f}%")
+        c2.metric("Operational", int(func))
+        c3.metric("Maintenance Needed", int(total - func))
 
         st.divider()
-        st.subheader("📊 Operational Breakdown")
-        cat_col = next((h for h in raw_headers if "cat" in h.lower()), raw_headers[0])
-        chart_df = df_inv.groupby(cat_col).sum(numeric_only=True).reset_index()
-        fig = px.bar(chart_df, x=cat_col, y=[f_col, q_col], barmode='group', title="Functional vs Total Units")
+        cat_col = headers[0] # Assuming first col is Category
+        fig = px.bar(df_inv.groupby(cat_col).sum(numeric_only=True).reset_index(), 
+                     x=cat_col, y=[F_COL, Q_COL], barmode='group', title="Status by Category")
         st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("Register items to view Dashboard analytics.")
 
-# --- 6. FULL INVENTORY OPERATIONAL STATUS ---
+# --- 6. INVENTORY OPERATIONAL STATUS (SAFE VERSION) ---
 elif menu == "🔎 Inventory Operational Status":
-    st.subheader("🔎 Full Asset Database & Conditional Status")
+    st.subheader("🔎 Asset Database")
     
     if df_inv.empty:
-        st.info("No equipment data found.")
+        st.info("No data found.")
     else:
-        st.write("Below is the complete record of every asset. You can edit the operational status directly.")
-        
-        # Search bar
-        search = st.text_input("Filter Entire Database (Category, Name, Code, etc.)...", "")
-        filtered_df = df_inv[df_inv.apply(lambda row: row.astype(str).str.contains(search, case=False).any(), axis=1)]
+        search = st.text_input("Search inventory...", "")
+        mask = df_inv.apply(lambda row: row.astype(str).str.contains(search, case=False).any(), axis=1)
+        filtered_df = df_inv[mask]
 
-        # Find critical columns for locking/auto-calc
-        q_col = next((h for h in raw_headers if "qty" in h.lower() or "total" in h.lower()), "")
-        f_col = next((h for h in raw_headers if "func" in h.lower() or "working" in h.lower()), "")
-        nf_col = next((h for h in raw_headers if "non" in h.lower() or "broken" in h.lower()), "")
-
-        # Display the FULL dataframe
+        # data_editor will now work because headers are unique strings
         edited_df = st.data_editor(
             filtered_df,
             hide_index=True, 
             use_container_width=True,
             column_config={
-                q_col: st.column_config.NumberColumn(disabled=True),
-                nf_col: st.column_config.NumberColumn(disabled=True),
-                # Protect metadata from accidental edits in this view
-                raw_headers[0]: st.column_config.Column(disabled=True), # Category
-                raw_headers[1]: st.column_config.Column(disabled=True)  # Subsystem
+                Q_COL: st.column_config.NumberColumn(disabled=True) if Q_COL else None,
+                NF_COL: st.column_config.NumberColumn(disabled=True) if NF_COL else None
             }
         )
 
-        if st.button("💾 Save All Changes to Cloud"):
-            with st.spinner("Syncing to Google Sheets..."):
-                f_idx = raw_headers.index(f_col) + 1
-                nf_idx = raw_headers.index(nf_col) + 1
-                
-                for i, row in edited_df.iterrows():
-                    sheet_row = int(filtered_df.index[i]) + 2
-                    total_val = int(row[q_col])
-                    f_val = min(int(row[f_col]), total_val)
+        if st.button("💾 Save Changes"):
+            if F_COL and NF_COL:
+                with st.spinner("Syncing to Sheet..."):
+                    # Match clean headers back to sheet indices
+                    f_idx = headers.index(F_COL) + 1
+                    nf_idx = headers.index(NF_COL) + 1
                     
-                    inv_ws.update_cell(sheet_row, f_idx, f_val)
-                    inv_ws.update_cell(sheet_row, nf_idx, total_val - f_val)
-                
-                st.success("✅ Full Inventory Synced!")
-                st.rerun()
+                    for i, row in edited_df.iterrows():
+                        sheet_row = int(filtered_df.index[i]) + 2
+                        tot = int(row[Q_COL])
+                        f_val = min(int(row[F_COL]), tot)
+                        inv_ws.update_cell(sheet_row, f_idx, f_val)
+                        inv_ws.update_cell(sheet_row, nf_idx, tot - f_val)
+                    st.success("✅ Database Updated!")
+                    st.rerun()
+            else:
+                st.error("Cannot save: 'Functional' or 'Non-Functional' columns not identified.")
 
 # --- 7. REGISTRATION ---
 elif menu == "📝 Register New Equipment":
-    st.subheader("📝 New Asset Onboarding")
-    
+    st.subheader("📝 Register Asset")
     cat = st.selectbox("Category", list(EQUIPMENT_STRUCTURE.keys()))
     sub = st.selectbox("Subsystem", EQUIPMENT_STRUCTURE[cat])
     
-    with st.form("full_reg", clear_on_submit=True):
-        c1, c2, c3 = st.columns(3)
-        code = c1.text_input("Asset Code (Tag)")
-        unit = c2.selectbox("Unit", ["Nos", "Sets", "Meters", "Km"])
-        qty = c3.number_input("Quantity", min_value=1, step=1)
-        
-        c4, c5, c6 = st.columns(3)
-        cost = c4.number_input("Unit Cost ($)")
-        life = c5.number_input("Useful Life (Years)", value=10)
-        age = c6.number_input("Current Age (Years)", value=0)
-        
-        if st.form_submit_button("✅ Register Asset"):
-            # Matches standard GSheet Format: Category, Subsystem, Code, Unit, Total Qty, Status, U-Cost, T-Val, Life, Age, Func Qty, Non-Func Qty
-            new_row = [cat, sub, code, unit, qty, "Functional", cost, (qty*cost), life, age, qty, 0]
+    with st.form("reg_form", clear_on_submit=True):
+        code = st.text_input("Asset Code")
+        qty = st.number_input("Quantity", min_value=1, step=1)
+        if st.form_submit_button("✅ Register"):
+            # Ensure this matches your Google Sheet's actual column count
+            new_row = [cat, sub, code, "Nos", qty, "Functional", 0, 0, 10, 0, qty, 0]
             inv_ws.append_row(new_row)
-            st.success(f"Asset {code} ({sub}) added successfully!")
-            st.rerun()
+            st.success("Added!"); st.rerun()
+
 
 
 
