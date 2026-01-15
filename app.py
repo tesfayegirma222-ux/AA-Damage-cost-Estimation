@@ -235,4 +235,3 @@ elif menu == "📝 Register New Equipment":
 
 
 
-
