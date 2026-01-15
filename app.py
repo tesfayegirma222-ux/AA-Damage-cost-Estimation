@@ -4,7 +4,7 @@ import plotly.express as px
 import gspread
 from google.oauth2.service_account import Credentials
 
-# --- 1. YOUR OFFICIAL EQUIPMENT HIERARCHY ---
+# --- 1. OFFICIAL STRUCTURE ---
 EQUIPMENT_STRUCTURE = {
     "Electric Power Source": ["Electric Utility", "Generator"],
     "Electric Power Distribution": ["ATS", "Breakers", "Power Cable", "Main Breakers", "DP"],
@@ -37,135 +37,137 @@ def init_connection():
 
 inv_ws = init_connection()
 
-# --- 3. DATA ENGINE (FIXES DUPLICATE/EMPTY HEADERS) ---
-def get_full_data(worksheet):
+# --- 3. HEADER CORRECTION & DATA LOADING ---
+def get_standardized_data(worksheet):
     if not worksheet: return pd.DataFrame(), []
     data = worksheet.get_all_values()
     if len(data) < 1: return pd.DataFrame(), []
     
-    # --- HEADER SANITIZATION ---
-    raw_headers = data[0]
-    clean_headers = []
-    counts = {}
+    # Define the "Gold Standard" Headers
+    OFFICIAL_HEADERS = [
+        "Category", "Subsystem", "Asset Code", "Unit", "Total Qty", 
+        "Status", "Unit Cost", "Total Value", "Life", "Age", 
+        "Functional Qty", "Non-Functional Qty"
+    ]
     
-    for i, h in enumerate(raw_headers):
-        h_str = str(h).strip()
-        if h_str == "": h_str = f"Unnamed_{i}" # Fill empty headers
-        
-        # Handle duplicate names
-        if h_str in counts:
-            counts[h_str] += 1
-            clean_headers.append(f"{h_str}_{counts[h_str]}")
-        else:
-            counts[h_str] = 0
-            clean_headers.append(h_str)
-
-    df = pd.DataFrame(data[1:], columns=clean_headers).dropna(how='all')
+    # Load raw data
+    raw_df = pd.DataFrame(data[1:], columns=data[0]).dropna(how='all')
     
-    # Identify critical columns for Dashboard logic using keywords
-    def find_best_match(keywords):
-        for h in clean_headers:
-            if any(k in h.lower() for k in keywords): return h
-        return None
-
-    q_col = find_best_match(['qty', 'total', 'quantity'])
-    f_col = find_best_match(['func', 'working', 'operational'])
-    nf_col = find_best_match(['non', 'broken', 'failed'])
-
-    # Ensure math columns are numeric
-    for col in [q_col, f_col, nf_col]:
-        if col:
-            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+    # Map raw columns to official ones (Handling typos/spaces)
+    mapping = {}
+    for official in OFFICIAL_HEADERS:
+        for raw in raw_df.columns:
+            if official.lower().replace(" ", "") in raw.lower().replace(" ", ""):
+                mapping[raw] = official
+                break
+    
+    df = raw_df.rename(columns=mapping)
+    
+    # Ensure all official headers exist in the dataframe (even if empty)
+    for col in OFFICIAL_HEADERS:
+        if col not in df.columns:
+            df[col] = 0 if "Qty" in col or "Cost" in col or "Value" in col else ""
+    
+    # Select and order columns by the official head
+    df = df[OFFICIAL_HEADERS]
+    
+    # Convert math columns
+    num_cols = ["Total Qty", "Unit Cost", "Total Value", "Life", "Age", "Functional Qty", "Non-Functional Qty"]
+    for col in num_cols:
+        df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
             
-    return df, clean_headers, q_col, f_col, nf_col
+    return df, OFFICIAL_HEADERS
 
-df_inv, headers, Q_COL, F_COL, NF_COL = get_full_data(inv_ws)
+df_inv, HEADERS = get_standardized_data(inv_ws)
 
-# --- 4. UI SETTINGS ---
+# --- 4. UI SETUP ---
 st.set_page_config(page_title="AAE Asset Portal", layout="wide")
 st.markdown("""
     <div style="background-color: #1E3A8A; padding: 20px; border-radius: 12px; color: white; text-align: center; margin-bottom: 25px;">
         <h1 style="margin:0;">Addis Ababa-Adama Expressway</h1>
-        <p style="margin:0;">Electromechanical Asset Management System</p>
+        <p style="margin:0;">Electromechanical Equipment Master Database</p>
     </div>
     """, unsafe_allow_html=True)
 
 menu = st.sidebar.radio("Navigation", ["📊 Smart Dashboard", "🔎 Inventory Operational Status", "📝 Register New Equipment"])
 
-# --- 5. DASHBOARD ---
+# --- 5. MODULE: DASHBOARD ---
 if menu == "📊 Smart Dashboard":
-    if not df_inv.empty and Q_COL and F_COL:
-        total = df_inv[Q_COL].sum()
-        func = df_inv[F_COL].sum()
-        health = (func / total * 100) if total > 0 else 0
+    if not df_inv.empty:
+        t_qty = df_inv["Total Qty"].sum()
+        f_qty = df_inv["Functional Qty"].sum()
+        health = (f_qty / t_qty * 100) if t_qty > 0 else 0
         
         c1, c2, c3 = st.columns(3)
-        c1.metric("Overall Health", f"{health:.1f}%")
-        c2.metric("Operational", int(func))
-        c3.metric("Maintenance Needed", int(total - func))
+        c1.metric("System Health", f"{health:.1f}%")
+        c2.metric("Total Operational", int(f_qty))
+        c3.metric("Maintenance Required", int(t_qty - f_qty))
 
         st.divider()
-        cat_col = headers[0] # Assuming first col is Category
-        fig = px.bar(df_inv.groupby(cat_col).sum(numeric_only=True).reset_index(), 
-                     x=cat_col, y=[F_COL, Q_COL], barmode='group', title="Status by Category")
+        fig = px.bar(df_inv.groupby("Category").sum(numeric_only=True).reset_index(), 
+                     x="Category", y=["Functional Qty", "Total Qty"], barmode='group',
+                     title="Asset Readiness by Category", color_discrete_map={"Functional Qty": "#22C55E", "Total Qty": "#94A3B8"})
         st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.info("Register items to view Dashboard analytics.")
 
-# --- 6. INVENTORY OPERATIONAL STATUS (SAFE VERSION) ---
+# --- 6. MODULE: INVENTORY OPERATIONAL STATUS ---
 elif menu == "🔎 Inventory Operational Status":
-    st.subheader("🔎 Asset Database")
+    st.subheader("🔎 Master Database - Full Asset Information")
     
-    if df_inv.empty:
-        st.info("No data found.")
-    else:
-        search = st.text_input("Search inventory...", "")
-        mask = df_inv.apply(lambda row: row.astype(str).str.contains(search, case=False).any(), axis=1)
-        filtered_df = df_inv[mask]
+    search = st.text_input("Search (Category, Subsystem, or Code)...", "")
+    filtered_df = df_inv[df_inv.apply(lambda row: row.astype(str).str.contains(search, case=False).any(), axis=1)]
 
-        # data_editor will now work because headers are unique strings
-        edited_df = st.data_editor(
-            filtered_df,
-            hide_index=True, 
-            use_container_width=True,
-            column_config={
-                Q_COL: st.column_config.NumberColumn(disabled=True) if Q_COL else None,
-                NF_COL: st.column_config.NumberColumn(disabled=True) if NF_COL else None
-            }
-        )
+    # Dynamic Data Editor with Corrected Headers
+    edited_df = st.data_editor(
+        filtered_df,
+        hide_index=True, 
+        use_container_width=True,
+        column_config={
+            "Total Qty": st.column_config.NumberColumn(disabled=True),
+            "Non-Functional Qty": st.column_config.NumberColumn(disabled=True),
+            "Total Value": st.column_config.CurrencyColumn(disabled=True),
+            "Category": st.column_config.Column(disabled=True),
+            "Subsystem": st.column_config.Column(disabled=True)
+        }
+    )
 
-        if st.button("💾 Save Changes"):
-            if F_COL and NF_COL:
-                with st.spinner("Syncing to Sheet..."):
-                    # Match clean headers back to sheet indices
-                    f_idx = headers.index(F_COL) + 1
-                    nf_idx = headers.index(NF_COL) + 1
-                    
-                    for i, row in edited_df.iterrows():
-                        sheet_row = int(filtered_df.index[i]) + 2
-                        tot = int(row[Q_COL])
-                        f_val = min(int(row[F_COL]), tot)
-                        inv_ws.update_cell(sheet_row, f_idx, f_val)
-                        inv_ws.update_cell(sheet_row, nf_idx, tot - f_val)
-                    st.success("✅ Database Updated!")
-                    st.rerun()
-            else:
-                st.error("Cannot save: 'Functional' or 'Non-Functional' columns not identified.")
+    if st.button("💾 Save Database Changes"):
+        with st.spinner("Pushing corrected data to Google Sheets..."):
+            # Update entire rows to ensure consistency
+            for i, row in edited_df.iterrows():
+                sheet_row = int(filtered_df.index[i]) + 2
+                # Update Functional Qty and recalculate Non-Functional
+                f_val = min(int(row["Functional Qty"]), int(row["Total Qty"]))
+                nf_val = int(row["Total Qty"]) - f_val
+                
+                # Push back to specific cells to keep it fast
+                inv_ws.update_cell(sheet_row, HEADERS.index("Functional Qty") + 1, f_val)
+                inv_ws.update_cell(sheet_row, HEADERS.index("Non-Functional Qty") + 1, nf_val)
+                
+            st.success("✅ Master Database Synced Successfully!")
+            st.rerun()
 
-# --- 7. REGISTRATION ---
+# --- 7. MODULE: REGISTRATION ---
 elif menu == "📝 Register New Equipment":
-    st.subheader("📝 Register Asset")
+    st.subheader("📝 Asset Onboarding")
     cat = st.selectbox("Category", list(EQUIPMENT_STRUCTURE.keys()))
     sub = st.selectbox("Subsystem", EQUIPMENT_STRUCTURE[cat])
     
     with st.form("reg_form", clear_on_submit=True):
-        code = st.text_input("Asset Code")
-        qty = st.number_input("Quantity", min_value=1, step=1)
-        if st.form_submit_button("✅ Register"):
-            # Ensure this matches your Google Sheet's actual column count
-            new_row = [cat, sub, code, "Nos", qty, "Functional", 0, 0, 10, 0, qty, 0]
+        c1, c2, c3 = st.columns(3)
+        code = c1.text_input("Asset Code")
+        unit = c2.selectbox("Unit", ["Nos", "Sets", "Meters"])
+        qty = c3.number_input("Quantity", min_value=1, step=1)
+        
+        c4, c5 = st.columns(2)
+        cost = c4.number_input("Unit Cost", min_value=0.0)
+        life = c5.number_input("Life Expectancy (Years)", value=10)
+        
+        if st.form_submit_button("✅ Add Asset to Master Database"):
+            new_row = [cat, sub, code, unit, qty, "Functional", cost, (qty*cost), life, 0, qty, 0]
             inv_ws.append_row(new_row)
-            st.success("Added!"); st.rerun()
+            st.success(f"Registered {sub} ({code}) successfully.")
+            st.rerun()
+
 
 
 
