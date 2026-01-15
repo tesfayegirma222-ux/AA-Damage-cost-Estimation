@@ -35,12 +35,13 @@ def init_connection():
 
 inv_ws = init_connection()
 
-# --- 3. DATA ENGINE (ROBUST COLUMN MAPPING) ---
+# --- 3. DATA ENGINE (SMART COLUMN RESOLVER) ---
 def load_data(worksheet):
     if not worksheet: return pd.DataFrame()
     data = worksheet.get_all_values()
     if len(data) < 2: return pd.DataFrame()
     
+    # Sanitize Headers (Fixes Streamlit Duplicate Error)
     raw_headers = data[0]
     clean_headers = []
     seen = {}
@@ -55,9 +56,9 @@ def load_data(worksheet):
             
     df = pd.DataFrame(data[1:], columns=clean_headers)
     
-    # Force Numeric for calculation columns
+    # Convert numeric columns automatically
     for col in df.columns:
-        if any(k in col.lower() for k in ['qty', 'total', 'cost', 'value', 'func', 'non']):
+        if any(k in col.lower() for k in ['qty', 'total', 'cost', 'value', 'life', 'age', 'func', 'non']):
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
             
     return df
@@ -69,7 +70,7 @@ df = load_data(inv_ws)
 st.markdown("""
     <div style="background: #1E3A8A; color: white; padding: 15px; border-radius: 10px; text-align: center; margin-bottom: 20px;">
         <h2 style="margin:0;">Addis Ababa-Adama Expressway</h2>
-        <p style="margin:0;">Electromechanical Master Database</p>
+        <p style="margin:0;">Electromechanical Master Database (Live Sync)</p>
     </div>
 """, unsafe_allow_html=True)
 
@@ -77,12 +78,12 @@ menu = st.sidebar.radio("Navigation", ["🔎 Inventory Operational Status", "�
 
 # --- 5. MODULE: INVENTORY OPERATIONAL STATUS ---
 if menu == "🔎 Inventory Operational Status":
-    st.subheader("🔎 Master Registry & Status")
+    st.subheader("🔎 Master Registry & Operational Health")
     
     if df.empty:
-        st.warning("No data found.")
+        st.warning("No data found in Google Sheets.")
     else:
-        search = st.text_input("Search (Category, Subsystem, Code, etc.)", "")
+        search = st.text_input("Search Assets...", "")
         mask = df.apply(lambda row: row.astype(str).str.contains(search, case=False).any(), axis=1)
         display_df = df[mask]
 
@@ -94,13 +95,24 @@ if menu == "🔎 Inventory Operational Status":
         )
 
         if st.button("💾 Sync Updates to Google Sheet"):
-            with st.spinner("Updating..."):
+            with st.spinner("Calculating and Syncing..."):
+                # Column index logic for Column 12 (Non-Functional)
+                # Find column names dynamically to avoid index errors
+                qty_col = next((c for c in df.columns if 'total' in c.lower() or 'qty' in c.lower()), None)
+                func_col = next((c for c in df.columns if 'func' in c.lower()), None)
+                non_func_col = next((c for c in df.columns if 'non' in c.lower()), None)
+
                 for i, row in edited_df.iterrows():
                     sheet_row = int(display_df.index[i]) + 2
+                    
+                    # Auto-update Column 12 (Non-Functional) if columns are found
+                    if qty_col and func_col and non_func_col:
+                        row[non_func_col] = row[qty_col] - row[func_col]
+                    
                     inv_ws.update(range_name=f"A{sheet_row}", values=[row.tolist()])
-                st.success("✅ Database Synced!"); st.rerun()
+                st.success("✅ Database Updated!"); st.rerun()
 
-# --- 6. MODULE: REGISTRATION (AAE CATEGORIES) ---
+# --- 6. MODULE: REGISTRATION ---
 elif menu == "📝 Register New Equipment":
     st.subheader("📝 New Asset Onboarding")
     
@@ -110,7 +122,7 @@ elif menu == "📝 Register New Equipment":
         subsystem = col2.selectbox("Subsystem", AAE_STRUCTURE[category])
         
         col3, col4, col5 = st.columns(3)
-        code = col3.text_input("Asset Code (Tag)")
+        code = col3.text_input("Asset Code")
         unit = col4.selectbox("Unit", ["Nos", "Sets", "Meters", "Km"])
         qty = col5.number_input("Total Quantity", min_value=1)
         
@@ -118,28 +130,47 @@ elif menu == "📝 Register New Equipment":
         cost = col6.number_input("Unit Cost", min_value=0.0)
         life = col7.number_input("Useful Life (Years)", value=10)
         
-        if st.form_submit_button("✅ Add to Master Database"):
-            # Ensure this list matches your sheet's column order exactly
-            # Cat, Sub, Code, Unit, Total Qty, Status, Cost, Total Val, Life, Age, Func Qty, Non-Func Qty
+        if st.form_submit_button("✅ Add Asset"):
+            # Matches Column 1 to 12 structure
             new_row = [category, subsystem, code, unit, qty, "Functional", cost, (qty*cost), life, 0, qty, 0]
             inv_ws.append_row(new_row)
-            st.success("Registered Successfully!"); st.rerun()
+            st.success("Asset added to database!"); st.rerun()
 
-# --- 7. DASHBOARD (FIXED ERROR) ---
+# --- 7. DASHBOARD (FIXED RESOLVER) ---
 elif menu == "📊 Dashboard":
     st.subheader("📊 System Health Analytics")
     if not df.empty:
-        # DYNAMIC COLUMN FINDER to prevent Plotly errors
-        cat_col = next((c for c in df.columns if 'category' in c.lower()), None)
-        sub_col = next((c for c in df.columns if 'subsystem' in c.lower()), None)
-        qty_col = next((c for c in df.columns if 'qty' in c.lower() or 'total' in c.lower()), None)
+        # Smart Resolver for Dashboard Columns
+        c_col = next((c for c in df.columns if 'category' in c.lower()), None)
+        s_col = next((c for c in df.columns if 'subsystem' in c.lower()), None)
+        q_col = next((c for c in df.columns if 'qty' in c.lower() or 'total' in c.lower()), None)
+        f_col = next((c for c in df.columns if 'func' in c.lower()), None)
+        n_col = next((c for c in df.columns if 'non' in c.lower()), None)
 
-        if cat_col and sub_col and qty_col:
-            fig = px.sunburst(df, path=[cat_col, sub_col], values=qty_col, 
-                              title="Asset Distribution Hierarchy")
-            st.plotly_chart(fig, use_container_width=True)
+        if c_col and s_col and q_col:
+            m1, m2, m3 = st.columns(3)
+            total_v = df[q_col].sum()
+            broken_v = df[n_col].sum() if n_col else 0
+            
+            m1.metric("Total Assets", int(total_v))
+            m2.metric("Operational", int(total_v - broken_v))
+            m3.metric("Maintenance Needed", int(broken_v), delta_color="inverse")
+
+            st.divider()
+
+            col_left, col_right = st.columns(2)
+            with col_left:
+                fig_sun = px.sunburst(df, path=[c_col, s_col], values=q_col, title="Inventory Distribution")
+                st.plotly_chart(fig_sun, use_container_width=True)
+            
+            with col_right:
+                if f_col:
+                    fig_bar = px.bar(df.groupby(c_col)[[f_col, q_col]].sum().reset_index(), 
+                                     x=c_col, y=[f_col, q_col], barmode='group', title="Health Status")
+                    st.plotly_chart(fig_bar, use_container_width=True)
         else:
-            st.error("Dashboard Error: Could not find Category, Subsystem, or Quantity columns in the data.")
+            st.error("Dashboard cannot find your columns. Please check your Google Sheet headers.")
+
 
 
 
