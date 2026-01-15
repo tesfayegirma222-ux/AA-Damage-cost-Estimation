@@ -50,30 +50,30 @@ sh = init_connection()
 inv_ws = sh.worksheet("Inventory")
 maint_ws = sh.worksheet("Maintenance")
 
-# --- 4. DATA HANDLING (FIXES KEYERROR & CONNECTS HEALTH) ---
+# --- 4. DATA HANDLING (FIXES KEYERROR) ---
 def get_safe_data(worksheet):
     data = worksheet.get_all_values()
     if not data or len(data) < 1: return pd.DataFrame()
     
-    # Clean headers to remove invisible spaces
+    # CLEAN HEADERS: Removes invisible spaces like "Current Age "
     headers = [str(h).strip() for h in data[0]]
     df = pd.DataFrame(data[1:], columns=headers)
     
-    # Ensure critical columns exist for the Health Chart
-    req_cols = ['Category', 'Asset Name', 'Quantity', 'Functional Qty', 'Non-Functional Qty', 'Total Value']
-    for col in req_cols:
-        if col not in df.columns: df[col] = 0
+    # SAFETY CHECK: If columns are missing, create them so it doesn't crash
+    required_cols = ['Category', 'Asset Name', 'Quantity', 'Functional Qty', 'Non-Functional Qty', 'Current Age', 'Expected Life', 'Total Value', 'Unit Cost']
+    for col in required_cols:
+        if col not in df.columns:
+            df[col] = 0
             
-    # Convert to numeric for calculation
-    num_cols = ['Quantity', 'Functional Qty', 'Non-Functional Qty', 'Total Value', 'Unit Cost', 'Current Age', 'Expected Life']
+    # CONVERT TO NUMBERS: Ensure math works for charts
+    num_cols = ['Quantity', 'Functional Qty', 'Non-Functional Qty', 'Current Age', 'Expected Life', 'Total Value', 'Unit Cost']
     for col in num_cols:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+        df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
     return df
 
 df_inv = get_safe_data(inv_ws)
 
-# --- 5. SIDEBAR NAVIGATION ---
+# --- 5. SIDEBAR ---
 with st.sidebar:
     st.image("https://img.icons8.com/fluency/96/highway.png", width=100)
     st.title("AAE-EMS Menu")
@@ -82,7 +82,6 @@ with st.sidebar:
 # --- 6. MODULE: DASHBOARD ---
 if menu == "📊 Dashboard":
     if not df_inv.empty:
-        # TOP METRICS
         m1, m2, m3, m4 = st.columns(4)
         total_q = df_inv['Quantity'].sum()
         func_q = df_inv['Functional Qty'].sum()
@@ -94,8 +93,6 @@ if menu == "📊 Dashboard":
         m4.metric("Aging Alerts", len(df_inv[df_inv['Current Age'] >= df_inv['Expected Life']]))
 
         st.subheader("📊 System Health (Operational Status)")
-        
-        # AGGREGATE HEALTH PER CATEGORY (Connected to Assessment)
         cat_sum = df_inv.groupby('Category').agg({'Functional Qty': 'sum', 'Quantity': 'sum'}).reset_index()
         cat_sum['Health Status %'] = (cat_sum['Functional Qty'] / cat_sum['Quantity'].replace(0, 1) * 100).round(1)
         
@@ -109,10 +106,8 @@ if menu == "📊 Dashboard":
 # --- 7. MODULE: CONDITIONAL ASSESSMENT (FIXED TABLE & SAVE) ---
 elif menu == "🔎 Conditional Assessment":
     st.subheader("🔎 Operational Status Assessment Table")
-    st.info("Update Functional/Non-Functional counts below. Click Save to update the Dashboard Health Chart.")
-    
     if not df_inv.empty:
-        # Define the editable table view
+        # TABLE VIEW
         edit_cols = ["Category", "Asset Name", "Quantity", "Functional Qty", "Non-Functional Qty"]
         edited_df = st.data_editor(
             df_inv[edit_cols],
@@ -126,7 +121,7 @@ elif menu == "🔎 Conditional Assessment":
             hide_index=True, use_container_width=True, key="assess_table"
         )
 
-        if st.button("💾 Save Assessment & Sync Dashboard"):
+        if st.button("💾 Save Assessment & Update Health Chart"):
             with st.spinner("Pushing health data to Google Sheets..."):
                 headers_clean = [h.strip() for h in inv_ws.row_values(1)]
                 try:
@@ -142,7 +137,7 @@ elif menu == "🔎 Conditional Assessment":
                         
                         inv_ws.update_cell(sheet_row, idx_f, f_val)
                         inv_ws.update_cell(sheet_row, idx_nf, nf_val)
-                        inv_ws.update_cell(sheet_row, idx_s, status)
+                        inv_ws.update_cell(sheet_row, idx_stat_idx if 'idx_s' in locals() else 6, status)
                         
                     st.success("✅ Records synced! Check Dashboard for live updates.")
                     st.rerun()
@@ -151,7 +146,7 @@ elif menu == "🔎 Conditional Assessment":
 
 # --- 8. MODULE: REGISTER NEW ASSET ---
 elif menu == "📝 Register New Asset":
-    st.subheader("📝 Register New Asset")
+    st.subheader("Register New Asset")
     cat_select = st.selectbox("Category", list(ASSET_CATEGORIES.keys()))
     with st.form("reg_form", clear_on_submit=True):
         sub_select = st.selectbox("Subsystem", ASSET_CATEGORIES[cat_select])
@@ -162,12 +157,12 @@ elif menu == "📝 Register New Asset":
         c_age = c2.number_input("Current Age (Yrs)", min_value=0)
         if st.form_submit_button("✅ Register Hardware"):
             inv_ws.append_row([cat_select, sub_select, "", "Nos", qty, "Functional", u_cost, qty*u_cost, e_life, c_age, qty, 0])
-            st.success("Asset recorded.")
+            st.success("Asset added.")
             st.rerun()
 
 # --- 9. MODULE: MAINTENANCE LOG ---
 elif menu == "🛠️ Maintenance Log":
-    st.subheader("🛠️ Log Maintenance Activity")
+    st.subheader("🛠️ Log Repair Activity")
     m_cat = st.selectbox("Category", sorted(df_inv["Category"].unique()) if not df_inv.empty else [])
     with st.form("m_form", clear_on_submit=True):
         target = st.selectbox("Subsystem", df_inv[df_inv["Category"] == m_cat]["Asset Name"].unique() if not df_inv.empty else [])
@@ -177,6 +172,7 @@ elif menu == "🛠️ Maintenance Log":
             maint_ws.append_row([m_cat, target, str(datetime.date.today()), qty, "Nos", "", "Repair", "Routine", cost])
             st.success("Log saved.")
             st.rerun()
+
 
 
 
