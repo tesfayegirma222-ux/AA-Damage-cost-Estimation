@@ -37,23 +37,21 @@ def init_connection():
 
 inv_ws = init_connection()
 
-# --- 3. HEADER CORRECTION & DATA LOADING ---
+# --- 3. STANDARDIZED DATA LOADING ---
 def get_standardized_data(worksheet):
     if not worksheet: return pd.DataFrame(), []
     data = worksheet.get_all_values()
     if len(data) < 1: return pd.DataFrame(), []
     
-    # Define the "Gold Standard" Headers
     OFFICIAL_HEADERS = [
         "Category", "Subsystem", "Asset Code", "Unit", "Total Qty", 
         "Status", "Unit Cost", "Total Value", "Life", "Age", 
         "Functional Qty", "Non-Functional Qty"
     ]
     
-    # Load raw data
     raw_df = pd.DataFrame(data[1:], columns=data[0]).dropna(how='all')
     
-    # Map raw columns to official ones (Handling typos/spaces)
+    # Map headers
     mapping = {}
     for official in OFFICIAL_HEADERS:
         for raw in raw_df.columns:
@@ -62,16 +60,13 @@ def get_standardized_data(worksheet):
                 break
     
     df = raw_df.rename(columns=mapping)
-    
-    # Ensure all official headers exist in the dataframe (even if empty)
     for col in OFFICIAL_HEADERS:
         if col not in df.columns:
-            df[col] = 0 if "Qty" in col or "Cost" in col or "Value" in col else ""
+            df[col] = 0 if any(x in col for x in ["Qty", "Cost", "Value", "Life", "Age"]) else ""
     
-    # Select and order columns by the official head
     df = df[OFFICIAL_HEADERS]
     
-    # Convert math columns
+    # Convert types
     num_cols = ["Total Qty", "Unit Cost", "Total Value", "Life", "Age", "Functional Qty", "Non-Functional Qty"]
     for col in num_cols:
         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
@@ -91,7 +86,7 @@ st.markdown("""
 
 menu = st.sidebar.radio("Navigation", ["📊 Smart Dashboard", "🔎 Inventory Operational Status", "📝 Register New Equipment"])
 
-# --- 5. MODULE: DASHBOARD ---
+# --- 5. DASHBOARD ---
 if menu == "📊 Smart Dashboard":
     if not df_inv.empty:
         t_qty = df_inv["Total Qty"].sum()
@@ -109,14 +104,14 @@ if menu == "📊 Smart Dashboard":
                      title="Asset Readiness by Category", color_discrete_map={"Functional Qty": "#22C55E", "Total Qty": "#94A3B8"})
         st.plotly_chart(fig, use_container_width=True)
 
-# --- 6. MODULE: INVENTORY OPERATIONAL STATUS ---
+# --- 6. INVENTORY STATUS (FIXED ATTRIBUTE ERROR) ---
 elif menu == "🔎 Inventory Operational Status":
     st.subheader("🔎 Master Database - Full Asset Information")
     
     search = st.text_input("Search (Category, Subsystem, or Code)...", "")
     filtered_df = df_inv[df_inv.apply(lambda row: row.astype(str).str.contains(search, case=False).any(), axis=1)]
 
-    # Dynamic Data Editor with Corrected Headers
+    # STABLE DATA EDITOR: Replaced CurrencyColumn with NumberColumn format
     edited_df = st.data_editor(
         filtered_df,
         hide_index=True, 
@@ -124,7 +119,8 @@ elif menu == "🔎 Inventory Operational Status":
         column_config={
             "Total Qty": st.column_config.NumberColumn(disabled=True),
             "Non-Functional Qty": st.column_config.NumberColumn(disabled=True),
-            "Total Value": st.column_config.CurrencyColumn(disabled=True),
+            "Total Value": st.column_config.NumberColumn("Total Value ($)", format="$%.2f", disabled=True),
+            "Unit Cost": st.column_config.NumberColumn("Unit Cost ($)", format="$%.2f"),
             "Category": st.column_config.Column(disabled=True),
             "Subsystem": st.column_config.Column(disabled=True)
         }
@@ -132,21 +128,21 @@ elif menu == "🔎 Inventory Operational Status":
 
     if st.button("💾 Save Database Changes"):
         with st.spinner("Pushing corrected data to Google Sheets..."):
-            # Update entire rows to ensure consistency
             for i, row in edited_df.iterrows():
                 sheet_row = int(filtered_df.index[i]) + 2
-                # Update Functional Qty and recalculate Non-Functional
                 f_val = min(int(row["Functional Qty"]), int(row["Total Qty"]))
                 nf_val = int(row["Total Qty"]) - f_val
                 
-                # Push back to specific cells to keep it fast
                 inv_ws.update_cell(sheet_row, HEADERS.index("Functional Qty") + 1, f_val)
                 inv_ws.update_cell(sheet_row, HEADERS.index("Non-Functional Qty") + 1, nf_val)
+                # Also update unit cost if changed
+                inv_ws.update_cell(sheet_row, HEADERS.index("Unit Cost") + 1, float(row["Unit Cost"]))
+                inv_ws.update_cell(sheet_row, HEADERS.index("Total Value") + 1, float(row["Unit Cost"] * row["Total Qty"]))
                 
             st.success("✅ Master Database Synced Successfully!")
             st.rerun()
 
-# --- 7. MODULE: REGISTRATION ---
+# --- 7. REGISTRATION ---
 elif menu == "📝 Register New Equipment":
     st.subheader("📝 Asset Onboarding")
     cat = st.selectbox("Category", list(EQUIPMENT_STRUCTURE.keys()))
@@ -159,14 +155,15 @@ elif menu == "📝 Register New Equipment":
         qty = c3.number_input("Quantity", min_value=1, step=1)
         
         c4, c5 = st.columns(2)
-        cost = c4.number_input("Unit Cost", min_value=0.0)
+        cost = c4.number_input("Unit Cost ($)", min_value=0.0)
         life = c5.number_input("Life Expectancy (Years)", value=10)
         
         if st.form_submit_button("✅ Add Asset to Master Database"):
             new_row = [cat, sub, code, unit, qty, "Functional", cost, (qty*cost), life, 0, qty, 0]
             inv_ws.append_row(new_row)
             st.success(f"Registered {sub} ({code}) successfully.")
-            st.rerun()
+            st.rerun()rerun()
+
 
 
 
