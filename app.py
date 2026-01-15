@@ -5,7 +5,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 # --- 1. EQUIPMENT STRUCTURE ---
-EQUIPMENT_STRUCTURE = {
+EQUIPMENT_MAP = {
     "Electric Power Source": ["Electric Utility", "Generator"],
     "Electric Power Distribution": ["ATS", "Breakers", "Power Cable", "Main Breakers", "DP"],
     "UPS System": ["UPS", "UPS Battery"],
@@ -19,7 +19,7 @@ EQUIPMENT_STRUCTURE = {
     "WIM System": ["Weight-In-Motion Sensor", "WIM Controller"]
 }
 
-# --- 2. AUTH & SMART CONNECTION ---
+# --- 2. SMART CONNECTION ---
 def init_connection():
     scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     try:
@@ -37,30 +37,48 @@ def init_connection():
 
 inv_ws = init_connection()
 
-# --- 3. DATA ENGINE ---
+# --- 3. DATA ENGINE (FIXES KEYERROR) ---
 def get_clean_data(worksheet):
     if not worksheet: return pd.DataFrame()
     data = worksheet.get_all_values()
-    if len(data) < 2: return pd.DataFrame()
+    if len(data) < 1: return pd.DataFrame()
+    
     headers = [str(h).strip() for h in data[0]]
     df = pd.DataFrame(data[1:], columns=headers).replace('', None).dropna(how='all')
     
-    # Ensure math columns are valid numbers
-    num_cols = ['Quantity', 'Functional Qty', 'Non-Functional Qty']
-    for col in num_cols:
+    # --- AUTO-FIX HEADERS ---
+    rename_logic = {
+        'Category': ['cat', 'type'],
+        'Asset Name': ['asset', 'item', 'subsystem', 'name'],
+        'Quantity': ['qty', 'total', 'quantity'],
+        'Functional Qty': ['func', 'working', 'ok'],
+        'Non-Functional Qty': ['non', 'broken', 'down', 'fail']
+    }
+    
+    new_cols = {}
+    for standard_name, keywords in rename_logic.items():
+        for actual_header in df.columns:
+            if any(k in actual_header.lower() for k in keywords):
+                new_cols[actual_header] = standard_name
+                break
+    
+    df = df.rename(columns=new_cols)
+    
+    # Ensure math columns are numeric
+    for col in ['Quantity', 'Functional Qty', 'Non-Functional Qty']:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+        else:
+            df[col] = 0 # Create it if it literally doesn't exist
+            
     return df
 
 df_inv = get_clean_data(inv_ws)
 
-# --- 4. UI STYLING ---
+# --- 4. UI SETTINGS ---
 st.set_page_config(page_title="AAE Asset Portal", layout="wide")
 st.markdown("""
-    <style>
-    .main-header { background-color: #1E3A8A; padding: 20px; border-radius: 12px; color: white; text-align: center; margin-bottom: 25px;}
-    </style>
-    <div class="main-header">
+    <div style="background-color: #1E3A8A; padding: 20px; border-radius: 12px; color: white; text-align: center; margin-bottom: 25px;">
         <h1>Addis Ababa-Adama Expressway</h1>
         <p>Asset Inventory & Conditional Assessment</p>
     </div>
@@ -68,86 +86,75 @@ st.markdown("""
 
 menu = st.sidebar.radio("Navigation", ["📊 Smart Dashboard", "🔎 Inventory Assessment", "📝 Register New Equipment"])
 
-# --- 5. MODULE: DASHBOARD ---
+# --- 5. DASHBOARD ---
 if menu == "📊 Smart Dashboard":
     if not df_inv.empty:
-        total_q = df_inv['Quantity'].sum()
-        func_q = df_inv['Functional Qty'].sum()
-        health = (func_q / total_q * 100) if total_q > 0 else 0
+        t_qty = df_inv['Quantity'].sum()
+        f_qty = df_inv['Functional Qty'].sum()
+        health = (f_qty / t_qty * 100) if t_qty > 0 else 0
         
-        st.metric("Total System Operational Health", f"{health:.1f}%")
+        st.metric("Total Operational Health", f"{health:.1f}%")
         
         chart_data = df_inv.groupby('Category').agg({'Functional Qty':'sum', 'Quantity':'sum'}).reset_index()
         chart_data['Health %'] = (chart_data['Functional Qty'] / chart_data['Quantity'].replace(0,1) * 100).round(1)
         
         fig = px.bar(chart_data, x='Health %', y='Category', orientation='h', range_x=[0, 105],
-                     color='Health %', color_continuous_scale='RdYlGn')
+                     color='Health %', color_continuous_scale='RdYlGn', text='Health %')
         st.plotly_chart(fig, use_container_width=True)
 
-# --- 6. MODULE: INVENTORY ASSESSMENT (REFINED) ---
+# --- 6. ASSESSMENT (UNBREAKABLE VERSION) ---
 elif menu == "🔎 Inventory Assessment":
-    st.subheader("🔎 Conditional Assessment Status")
+    st.subheader("🔎 Operational Status Update")
     
     if df_inv.empty:
-        st.info("No items currently registered in the system.")
+        st.info("No data found in the spreadsheet.")
     else:
-        # Added a filter to let you focus on specific systems
-        search_query = st.text_input("Search by Asset Name or Category", "")
+        # Search bar logic using standard name
+        search = st.text_input("Filter by Category or Asset", "")
         
-        # Filter the data based on search
+        # We check if 'Asset Name' exists (it should now thanks to our rename logic)
+        name_col = 'Asset Name' if 'Asset Name' in df_inv.columns else df_inv.columns[1]
+        cat_col = 'Category' if 'Category' in df_inv.columns else df_inv.columns[0]
+        
         filtered_df = df_inv[
-            df_inv['Asset Name'].str.contains(search_query, case=False, na=False) |
-            df_inv['Category'].str.contains(search_query, case=False, na=False)
+            df_inv[name_col].astype(str).str.contains(search, case=False) |
+            df_inv[cat_col].astype(str).str.contains(search, case=False)
         ]
 
-        st.write(f"Showing {len(filtered_df)} assets for assessment:")
-        
         edited_df = st.data_editor(
             filtered_df[['Category', 'Asset Name', 'Quantity', 'Functional Qty', 'Non-Functional Qty']],
-            hide_index=True,
-            use_container_width=True,
-            column_config={
-                "Category": st.column_config.Column(disabled=True),
-                "Asset Name": st.column_config.Column(disabled=True),
-                "Quantity": st.column_config.NumberColumn("Total", disabled=True),
-                "Functional Qty": st.column_config.NumberColumn("Working ✅", min_value=0)
-            }
+            hide_index=True, use_container_width=True,
+            column_config={"Quantity": st.column_config.NumberColumn(disabled=True)}
         )
 
-        if st.button("💾 Sync Assessment to Google Sheets"):
-            with st.spinner("Updating Database..."):
-                headers = [h.strip() for h in inv_ws.row_values(1)]
-                f_idx = headers.index("Functional Qty") + 1
-                nf_idx = headers.index("Non-Functional Qty") + 1
+        if st.button("💾 Save Changes"):
+            with st.spinner("Syncing..."):
+                headers = inv_ws.row_values(1)
+                # Find the actual indexes in the REAL sheet
+                f_idx = next(i for i, h in enumerate(headers, 1) if "func" in h.lower())
+                nf_idx = next(i for i, h in enumerate(headers, 1) if "non" in h.lower())
                 
                 for i, row in edited_df.iterrows():
-                    # Map the filtered row back to the original spreadsheet row index
-                    orig_idx = filtered_df.index[i]
-                    sheet_row = int(orig_idx) + 2
-                    
-                    total = int(row['Quantity'])
-                    f_val = min(int(row['Functional Qty']), total)
-                    
+                    sheet_row = int(filtered_df.index[i]) + 2
+                    f_val = min(int(row['Functional Qty']), int(row['Quantity']))
                     inv_ws.update_cell(sheet_row, f_idx, f_val)
-                    inv_ws.update_cell(sheet_row, nf_idx, total - f_val)
+                    inv_ws.update_cell(sheet_row, nf_idx, int(row['Quantity']) - f_val)
                 
-                st.success("✅ Assessment Updated Successfully!")
+                st.success("✅ Database Updated!")
                 st.rerun()
 
-# --- 7. MODULE: REGISTER NEW EQUIPMENT ---
+# --- 7. REGISTRATION ---
 elif menu == "📝 Register New Equipment":
-    st.subheader("📝 Registration")
-    cat = st.selectbox("Category", list(EQUIPMENT_STRUCTURE.keys()))
-    sub = st.selectbox("Subsystem", EQUIPMENT_STRUCTURE[cat])
-    
-    with st.form("reg", clear_on_submit=True):
-        qty = st.number_input("Quantity", min_value=1, step=1)
-        if st.form_submit_button("✅ Add Asset"):
-            # New row logic
-            new_row = [cat, sub, "", "Nos", qty, "Functional", 0, 0, 10, 0, qty, 0]
-            inv_ws.append_row(new_row)
-            st.success(f"Registered {sub} in {cat}.")
+    st.subheader("📝 Register New Asset")
+    c = st.selectbox("Category", list(EQUIPMENT_MAP.keys()))
+    s = st.selectbox("Subsystem", EQUIPMENT_MAP[c])
+    with st.form("add_form"):
+        q = st.number_input("Total Quantity", min_value=1)
+        if st.form_submit_button("✅ Add to Inventory"):
+            inv_ws.append_row([c, s, "", "Nos", q, "Functional", 0, 0, 10, 0, q, 0])
+            st.success(f"Added {s}")
             st.rerun()
+
 
 
 
