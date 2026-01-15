@@ -51,7 +51,6 @@ def get_standardized_data(worksheet):
     
     raw_df = pd.DataFrame(data[1:], columns=data[0]).dropna(how='all')
     
-    # Map headers
     mapping = {}
     for official in OFFICIAL_HEADERS:
         for raw in raw_df.columns:
@@ -65,8 +64,6 @@ def get_standardized_data(worksheet):
             df[col] = 0 if any(x in col for x in ["Qty", "Cost", "Value", "Life", "Age"]) else ""
     
     df = df[OFFICIAL_HEADERS]
-    
-    # Convert types
     num_cols = ["Total Qty", "Unit Cost", "Total Value", "Life", "Age", "Functional Qty", "Non-Functional Qty"]
     for col in num_cols:
         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
@@ -101,17 +98,16 @@ if menu == "📊 Smart Dashboard":
         st.divider()
         fig = px.bar(df_inv.groupby("Category").sum(numeric_only=True).reset_index(), 
                      x="Category", y=["Functional Qty", "Total Qty"], barmode='group',
-                     title="Asset Readiness by Category", color_discrete_map={"Functional Qty": "#22C55E", "Total Qty": "#94A3B8"})
+                     title="Asset Readiness by Category")
         st.plotly_chart(fig, use_container_width=True)
 
-# --- 6. INVENTORY STATUS (FIXED ATTRIBUTE ERROR) ---
+# --- 6. INVENTORY STATUS ---
 elif menu == "🔎 Inventory Operational Status":
     st.subheader("🔎 Master Database - Full Asset Information")
     
     search = st.text_input("Search (Category, Subsystem, or Code)...", "")
     filtered_df = df_inv[df_inv.apply(lambda row: row.astype(str).str.contains(search, case=False).any(), axis=1)]
 
-    # STABLE DATA EDITOR: Replaced CurrencyColumn with NumberColumn format
     edited_df = st.data_editor(
         filtered_df,
         hide_index=True, 
@@ -119,27 +115,27 @@ elif menu == "🔎 Inventory Operational Status":
         column_config={
             "Total Qty": st.column_config.NumberColumn(disabled=True),
             "Non-Functional Qty": st.column_config.NumberColumn(disabled=True),
-            "Total Value": st.column_config.NumberColumn("Total Value ($)", format="$%.2f", disabled=True),
-            "Unit Cost": st.column_config.NumberColumn("Unit Cost ($)", format="$%.2f"),
+            "Total Value": st.column_config.NumberColumn("Total Value", format="$%.2f", disabled=True),
+            "Unit Cost": st.column_config.NumberColumn("Unit Cost", format="$%.2f"),
             "Category": st.column_config.Column(disabled=True),
             "Subsystem": st.column_config.Column(disabled=True)
         }
     )
 
     if st.button("💾 Save Database Changes"):
-        with st.spinner("Pushing corrected data to Google Sheets..."):
+        with st.spinner("Pushing data to Cloud..."):
             for i, row in edited_df.iterrows():
                 sheet_row = int(filtered_df.index[i]) + 2
                 f_val = min(int(row["Functional Qty"]), int(row["Total Qty"]))
                 nf_val = int(row["Total Qty"]) - f_val
                 
+                # Update specific columns
                 inv_ws.update_cell(sheet_row, HEADERS.index("Functional Qty") + 1, f_val)
                 inv_ws.update_cell(sheet_row, HEADERS.index("Non-Functional Qty") + 1, nf_val)
-                # Also update unit cost if changed
                 inv_ws.update_cell(sheet_row, HEADERS.index("Unit Cost") + 1, float(row["Unit Cost"]))
                 inv_ws.update_cell(sheet_row, HEADERS.index("Total Value") + 1, float(row["Unit Cost"] * row["Total Qty"]))
                 
-            st.success("✅ Master Database Synced Successfully!")
+            st.success("✅ Master Database Synced!")
             st.rerun()
 
 # --- 7. REGISTRATION ---
@@ -155,14 +151,15 @@ elif menu == "📝 Register New Equipment":
         qty = c3.number_input("Quantity", min_value=1, step=1)
         
         c4, c5 = st.columns(2)
-        cost = c4.number_input("Unit Cost ($)", min_value=0.0)
+        cost = c4.number_input("Unit Cost", min_value=0.0)
         life = c5.number_input("Life Expectancy (Years)", value=10)
         
-        if st.form_submit_button("✅ Add Asset to Master Database"):
+        if st.form_submit_button("✅ Add Asset"):
             new_row = [cat, sub, code, unit, qty, "Functional", cost, (qty*cost), life, 0, qty, 0]
             inv_ws.append_row(new_row)
-            st.success(f"Registered {sub} ({code}) successfully.")
-            st.rerun()rerun()
+            st.success("Registered successfully.")
+            st.rerun()
+
 
 
 
