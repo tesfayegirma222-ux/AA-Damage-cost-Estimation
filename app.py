@@ -35,13 +35,12 @@ def init_connection():
 
 inv_ws = init_connection()
 
-# --- 3. DATA ENGINE (CLEAN & MAP) ---
+# --- 3. DATA ENGINE (ROBUST COLUMN MAPPING) ---
 def load_data(worksheet):
     if not worksheet: return pd.DataFrame()
     data = worksheet.get_all_values()
     if len(data) < 2: return pd.DataFrame()
     
-    # Sanitize Headers for Streamlit (Unique Column Names)
     raw_headers = data[0]
     clean_headers = []
     seen = {}
@@ -56,10 +55,9 @@ def load_data(worksheet):
             
     df = pd.DataFrame(data[1:], columns=clean_headers)
     
-    # Numeric Cleanup
-    num_cols = ["Total Qty", "Unit Cost", "Total Value", "Life", "Age", "Functional Qty", "Non-Functional Qty"]
-    for col in num_cols:
-        if col in df.columns:
+    # Force Numeric for calculation columns
+    for col in df.columns:
+        if any(k in col.lower() for k in ['qty', 'total', 'cost', 'value', 'func', 'non']):
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
             
     return df
@@ -88,27 +86,17 @@ if menu == "🔎 Inventory Operational Status":
         mask = df.apply(lambda row: row.astype(str).str.contains(search, case=False).any(), axis=1)
         display_df = df[mask]
 
-        # Professional Data Editor
         edited_df = st.data_editor(
             display_df,
             hide_index=True, 
             use_container_width=True,
-            column_config={
-                "Total Value": st.column_config.NumberColumn(format="$%.2f", disabled=True),
-                "Unit Cost": st.column_config.NumberColumn(format="$%.2f"),
-                "Total Qty": st.column_config.NumberColumn(disabled=True),
-                "Category": st.column_config.Column(disabled=True),
-                "Subsystem": st.column_config.Column(disabled=True)
-            }
+            num_rows="dynamic"
         )
 
         if st.button("💾 Sync Updates to Google Sheet"):
             with st.spinner("Updating..."):
                 for i, row in edited_df.iterrows():
                     sheet_row = int(display_df.index[i]) + 2
-                    # Automatic calculation of Non-Functional and Value
-                    row["Non-Functional Qty"] = int(row["Total Qty"]) - int(row["Functional Qty"])
-                    row["Total Value"] = float(row["Unit Cost"]) * int(row["Total Qty"])
                     inv_ws.update(range_name=f"A{sheet_row}", values=[row.tolist()])
                 st.success("✅ Database Synced!"); st.rerun()
 
@@ -131,19 +119,28 @@ elif menu == "📝 Register New Equipment":
         life = col7.number_input("Useful Life (Years)", value=10)
         
         if st.form_submit_button("✅ Add to Master Database"):
-            # Format to match your Google Sheet exactly
+            # Ensure this list matches your sheet's column order exactly
             # Cat, Sub, Code, Unit, Total Qty, Status, Cost, Total Val, Life, Age, Func Qty, Non-Func Qty
             new_row = [category, subsystem, code, unit, qty, "Functional", cost, (qty*cost), life, 0, qty, 0]
             inv_ws.append_row(new_row)
             st.success("Registered Successfully!"); st.rerun()
 
-# --- 7. DASHBOARD ---
+# --- 7. DASHBOARD (FIXED ERROR) ---
 elif menu == "📊 Dashboard":
     st.subheader("📊 System Health Analytics")
     if not df.empty:
-        fig = px.sunburst(df, path=['Category', 'Subsystem'], values='Total Qty', 
-                          title="Asset Distribution Hierarchy")
-        st.plotly_chart(fig, use_container_width=True)
+        # DYNAMIC COLUMN FINDER to prevent Plotly errors
+        cat_col = next((c for c in df.columns if 'category' in c.lower()), None)
+        sub_col = next((c for c in df.columns if 'subsystem' in c.lower()), None)
+        qty_col = next((c for c in df.columns if 'qty' in c.lower() or 'total' in c.lower()), None)
+
+        if cat_col and sub_col and qty_col:
+            fig = px.sunburst(df, path=[cat_col, sub_col], values=qty_col, 
+                              title="Asset Distribution Hierarchy")
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.error("Dashboard Error: Could not find Category, Subsystem, or Quantity columns in the data.")
+
 
 
 
