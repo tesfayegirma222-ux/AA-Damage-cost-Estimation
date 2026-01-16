@@ -19,7 +19,7 @@ def connect_gs():
             
             # --- PASTE YOUR ACTUAL ID HERE ---
             # If you get a 404, this ID is likely wrong.
-            sheet_id = "YOUR_ACTUAL_SPREADSHEET_ID_FROM_URL" 
+            sheet_id = "1mwZcHMBsNkI8UQvdUQzNIjlpWpeZqzpuv5QsMLkJNxs" 
             return client.open_by_key(sheet_id)
         else:
             return "MISSING_SECRETS"
@@ -135,6 +135,7 @@ else:
                 ws = gc.worksheet("DamageReports")
                 cell = ws.find(case); ws.update_cell(cell.row, 6, "Estimated")
                 st.success("Finalized!"); st.rerun()
+
 
 
 
