@@ -1,183 +1,168 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
 import gspread
 from google.oauth2.service_account import Credentials
+from datetime import datetime
 
-# --- 1. AAE OFFICIAL HIERARCHY ---
-AAE_STRUCTURE = {
-    "Electric Power Source": ["Electric Utility", "Generator"],
-    "Electric Power Distribution": ["ATS", "Breakers", "Power Cable", "Main Breakers", "DP"],
-    "UPS System": ["UPS", "UPS Battery"],
-    "CCTV System": ["Lane Camera", "Booth Camera", "Road Camera", "Plaza Camera"],
-    "Auto-Railing System": ["Barrier Gate", "Controller"],
-    "Automatic Voltage Regulator": ["AVR"],
-    "HVAC System": ["Air Conditioning System"],
-    "Illumination System": ["High Mast Light", "Compound Light", "Road Light", "Booth Light", "Plaza Light"],
-    "Electronic Display System": ["Canopy Light", "VMS", "LED Notice Board", "Fog Light", "Money Fee Display", "Passage Signal Lamp"],
-    "Pump System": ["Surface Water Pump", "Submersible Pump"],
-    "WIM System": ["Weight-In-Motion Sensor", "WIM Controller"]
-}
-
-# --- 2. SECURE CONNECTION ---
-def init_connection():
-    scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+# --- 1. SECURE CONNECTION LOGIC ---
+def connect_gs():
     try:
-        creds_dict = st.secrets["gcp_service_account"]
-        creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
-        client = gspread.authorize(creds)
-        sh = client.open_by_url(st.secrets["SHEET_URL"])
-        target = next((s for s in sh.worksheets() if "inventory" in s.title.lower()), sh.get_worksheet(0))
-        return target
-    except Exception as e:
-        st.error(f"Connection Error: {e}")
-        return None
-
-inv_ws = init_connection()
-
-# --- 3. DATA ENGINE ---
-def load_data(worksheet):
-    if not worksheet: return pd.DataFrame()
-    data = worksheet.get_all_values()
-    if len(data) < 1: return pd.DataFrame()
-    
-    # Find Header Row
-    header_idx = 0
-    for i, row in enumerate(data):
-        if any(cell.strip() for cell in row):
-            header_idx = i
-            break
+        scope = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive"
+        ]
+        
+        if "gcp_service_account" in st.secrets:
+            creds_info = dict(st.secrets["gcp_service_account"])
+            if "private_key" in creds_info:
+                creds_info["private_key"] = creds_info["private_key"].replace("\\n", "\n")
             
-    raw_headers = data[header_idx]
-    clean_headers = []
-    seen = {}
-    for i, h in enumerate(raw_headers):
-        h = str(h).strip() if h else f"Col_{i+1}"
-        if h in seen:
-            seen[h] += 1
-            clean_headers.append(f"{h}_{seen[h]}")
+            creds = Credentials.from_service_account_info(creds_info, scopes=scope)
+            client = gspread.authorize(creds)
+            
+            # --- OPEN BY ID (Replace with your actual ID) ---
+            sheet_id = "YOUR_SPREADSHEET_ID_HERE" 
+            return client.open_by_key(sheet_id)
         else:
-            seen[h] = 0
-            clean_headers.append(h)
-            
-    df = pd.DataFrame(data[header_idx+1:], columns=clean_headers)
-    for col in df.columns:
-        if any(k in col.lower() for k in ['qty', 'total', 'cost', 'value', 'life', 'age', 'func', 'non']):
-            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-    return df
+            return "MISSING_SECRETS"
+    except Exception as e:
+        return str(e)
 
-# --- 4. UI SETUP ---
-st.set_page_config(page_title="AAE Asset Portal", layout="wide")
-df = load_data(inv_ws)
+# Initialize global connection
+gc_result = connect_gs()
 
-st.markdown("""
-    <div style="background: #1E3A8A; color: white; padding: 15px; border-radius: 10px; text-align: center; margin-bottom: 20px;">
-        <h2 style="margin:0;">Addis Ababa-Adama Expressway</h2>
-        <p style="margin:0;">Master Asset Database (Live Sync with Delete Control)</p>
-    </div>
-""", unsafe_allow_html=True)
+if gc_result == "MISSING_SECRETS":
+    st.error("⚠️ Secrets key '[gcp_service_account]' not found in Settings.")
+    st.stop()
+elif isinstance(gc_result, str):
+    st.error(f"❌ Connection Issue: {gc_result}")
+    st.stop()
+else:
+    gc = gc_result
 
-menu = st.sidebar.radio("Navigation", ["🔎 Inventory Operational Status", "📝 Register New Equipment", "📊 Dashboard"])
+# --- 2. DATA UTILITY ---
+def get_data(worksheet_name):
+    ws = gc.worksheet(worksheet_name)
+    return pd.DataFrame(ws.get_all_records())
 
-# --- 5. MODULE: INVENTORY OPERATIONAL STATUS (SAVE & DELETE) ---
-if menu == "🔎 Inventory Operational Status":
-    st.subheader("🔎 Master Registry Management")
-    
-    if df.empty:
-        st.warning("Database is empty or headers not found.")
-    else:
-        # Add Selector for Deletion
-        df_edit = df.copy()
-        df_edit.insert(0, "🗑️", False)
-
-        search = st.text_input("Search Assets...", "")
-        mask = df_edit.apply(lambda row: row.astype(str).str.contains(search, case=False).any(), axis=1)
-        display_df = df_edit[mask]
-
-        edited_df = st.data_editor(
-            display_df,
-            hide_index=True, 
-            use_container_width=True,
-            num_rows="fixed",
-            column_config={"🗑️": st.column_config.CheckboxColumn("Delete?", help="Select rows to remove")}
-        )
-
-        c1, c2 = st.columns([1, 1])
-        
-        if c1.button("💾 Save All Changes"):
-            with st.spinner("Syncing..."):
-                q_c = next((c for c in df.columns if 'total' in c.lower() or 'qty' in c.lower()), None)
-                f_c = next((c for c in df.columns if 'func' in c.lower()), None)
-                n_c = next((c for c in df.columns if 'non' in c.lower()), None)
-
-                for i, row in edited_df.iterrows():
-                    sheet_row = int(display_df.index[i]) + 2
-                    if q_c and f_c and n_c:
-                        row[n_c] = row[q_c] - row[f_c]
-                    # Drop the checkbox column before saving
-                    row_to_save = row.drop("🗑️").tolist()
-                    inv_ws.update(range_name=f"A{sheet_row}", values=[row_to_save])
-                st.success("Changes synced!"); st.rerun()
-
-        if c2.button("🗑️ Delete Selected Assets", type="primary"):
-            to_delete = edited_df[edited_df["🗑️"] == True].index.tolist()
-            if not to_delete:
-                st.warning("No rows selected for deletion.")
+# --- 3. MAIN APP LOGIC ---
+if 'logged_in' not in st.session_state:
+    st.title("🛡️ Asset Damage Management")
+    with st.form("login"):
+        u = st.text_input("Username")
+        p = st.text_input("Password", type="password")
+        if st.form_submit_button("Login"):
+            users_df = get_data("Users")
+            match = users_df[(users_df['Username'] == u) & (users_df['Password'] == str(p))]
+            if not match.empty:
+                st.session_state.logged_in = True
+                st.session_state.user = u
+                st.session_state.role = match.iloc[0]['Role']
+                st.rerun()
             else:
-                with st.spinner(f"Deleting {len(to_delete)} items..."):
-                    # Delete from bottom to top to preserve index order
-                    for idx in sorted(to_delete, reverse=True):
-                        inv_ws.delete_rows(idx + 2)
-                    st.success("Records deleted!"); st.rerun()
+                st.error("Invalid Username or Password")
+else:
+    st.sidebar.title(f"User: {st.session_state.user}")
+    choice = st.sidebar.radio("Navigation", ["Dashboard", "Asset Registry", "Damage Reporting", "Cost Estimation"])
 
-# --- 6. MODULE: REGISTRATION ---
-elif menu == "📝 Register New Equipment":
-    st.subheader("📝 New Asset Onboarding")
-    with st.form("aae_reg", clear_on_submit=True):
-        col1, col2 = st.columns(2)
-        category = col1.selectbox("Major Category", list(AAE_STRUCTURE.keys()))
-        subsystem = col2.selectbox("Subsystem", AAE_STRUCTURE[category])
-        
-        col3, col4, col5 = st.columns(3)
-        code = col3.text_input("Asset Code")
-        unit = col4.selectbox("Unit", ["Nos", "Sets", "Meters", "Km"])
-        qty = col5.number_input("Total Quantity", min_value=1)
-        
-        col6, col7 = st.columns(2)
-        cost = col6.number_input("Unit Cost", min_value=0.0)
-        life = col7.number_input("Useful Life (Years)", value=10)
-        
-        if st.form_submit_button("✅ Add Asset"):
-            new_row = [category, subsystem, code, unit, qty, "Functional", cost, (qty*cost), life, 0, qty, 0]
-            inv_ws.append_row(new_row)
-            st.success("Asset added!"); st.rerun()
+    if st.sidebar.button("Logout"):
+        del st.session_state.logged_in
+        st.rerun()
 
-# --- 7. DASHBOARD ---
-elif menu == "📊 Dashboard":
-    st.subheader("📊 System Health Analytics")
-    if not df.empty:
-        c_c = next((c for c in df.columns if 'cat' in c.lower()), None)
-        s_c = next((c for c in df.columns if 'sub' in c.lower()), None)
-        q_c = next((c for c in df.columns if 'qty' in c.lower() or 'total' in c.lower()), None)
-        n_c = next((c for c in df.columns if 'non' in c.lower()), None)
-
-        if c_c and s_c and q_c:
-            t_assets = df[q_c].sum()
-            b_assets = df[n_c].sum() if n_c else 0
-            
-            m1, m2, m3 = st.columns(3)
-            m1.metric("Total Assets", int(t_assets))
-            m2.metric("Operational", int(t_assets - b_assets))
-            m3.metric("Maintenance Required", int(b_assets), delta_color="inverse")
+    # --- MODULES ---
+    if choice == "Dashboard":
+        st.header("📊 Operational Summary")
+        reports_df = get_data("DamageReports")
+        registry_df = get_data("AssetRegistry")
+        
+        if not reports_df.empty:
+            # Metrics
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("Total Incidents", len(reports_df))
+            with col2:
+                total_val = registry_df['Asset Value'].sum() if 'Asset Value' in registry_df.columns else 0
+                st.metric("Total Portfolio Value", f"${total_val:,.2f}")
 
             st.divider()
-            l, r = st.columns(2)
-            with l:
-                st.plotly_chart(px.sunburst(df, path=[c_c, s_c], values=q_c, title="Inventory Distribution"), use_container_width=True)
-            with r:
-                st.plotly_chart(px.bar(df.groupby(c_c)[q_c].sum().reset_index(), x=c_c, y=q_c, title="Category Breakdown"), use_container_width=True)
+            
+            # Horizontal Chart by Category (Asset Name)
+            st.subheader("Incident Distribution by Asset")
+            chart_data = reports_df['Asset Name'].value_counts().reset_index()
+            chart_data.columns = ['Asset Name', 'Incident Count']
+            
+            st.bar_chart(
+                data=chart_data,
+                x="Incident Count",
+                y="Asset Name",
+                color="#2E86C1",
+                horizontal=True,
+                use_container_width=True
+            )
+            
+            st.divider()
+            st.write("### Raw Data Logs")
+            st.dataframe(reports_df, use_container_width=True)
         else:
-            st.error("Dashboard Column Error: Headers not recognized.")
+            st.info("No data available.")
+
+    elif choice == "Asset Registry":
+        st.header("🏗️ Asset Inventory")
+        df = get_data("AssetRegistry")
+        st.dataframe(df, use_container_width=True)
+        
+        with st.expander("Register New Asset"):
+            with st.form("new_asset"):
+                name = st.text_input("Asset Name")
+                unit = st.selectbox("Unit", ["Meter", "Piece", "Set"])
+                u_cost = st.number_input("Standard Unit Cost", min_value=0.0)
+                a_value = st.number_input("Total Asset Value (Replacement Cost)", min_value=0.0)
+                if st.form_submit_button("Save Asset"):
+                    # Added 'a_value' to the append row
+                    gc.worksheet("AssetRegistry").append_row([len(df)+1, name, "Road", unit, u_cost, a_value])
+                    st.success("Asset Registered Successfully!")
+                    st.rerun()
+
+    elif choice == "Damage Reporting":
+        st.header("🚨 Incident Reporting")
+        assets = get_data("AssetRegistry")['Asset Name'].tolist()
+        with st.form("report"):
+            case = st.text_input("Case Number")
+            asset = st.selectbox("Damaged Asset", assets)
+            loc = st.text_input("Location")
+            if st.form_submit_button("Submit"):
+                gc.worksheet("DamageReports").append_row([case, asset, loc, datetime.now().strftime("%Y-%m-%d"), st.session_state.user, "Pending"])
+                st.success("Report Submitted!")
+
+    elif choice == "Cost Estimation":
+        st.header("💰 Engineering Cost Evaluation")
+        reports = get_data("DamageReports")
+        pending = reports[reports['Status'] == 'Pending']
+        
+        if pending.empty:
+            st.info("No pending reports.")
+        else:
+            case = st.selectbox("Select Case", pending['Case No'].tolist())
+            qty = st.number_input("Quantity Damaged", min_value=0.1)
+            
+            asset_name = reports[reports['Case No'] == case]['Asset Name'].values[0]
+            reg = get_data("AssetRegistry")
+            u_cost = reg[reg['Asset Name'] == asset_name]['Unit Cost'].values[0]
+            
+            total = qty * u_cost
+            vat = total * 0.15
+            grand = total + vat
+            
+            st.metric("Grand Total (Incl. 15% VAT)", f"${grand:,.2f}")
+            
+            if st.button("Finalize Estimation"):
+                gc.worksheet("Estimations").append_row([case, qty, total, vat, grand, st.session_state.user])
+                ws = gc.worksheet("DamageReports")
+                cell = ws.find(case)
+                ws.update_cell(cell.row, 6, "Estimated")
+                st.success("Estimation Finalized!")
+                st.rerun()
+
 
 
 
