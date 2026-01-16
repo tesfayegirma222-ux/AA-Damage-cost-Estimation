@@ -72,7 +72,7 @@ df = load_data(inv_ws)
 st.markdown("""
     <div style="background: #1E3A8A; color: white; padding: 15px; border-radius: 10px; text-align: center; margin-bottom: 20px;">
         <h2 style="margin:0;">Addis Ababa-Adama Expressway</h2>
-        <p style="margin:0;">Master Asset Database (Real-Time Sync)</p>
+        <p style="margin:0;">Master Asset Database (Live Sync)</p>
     </div>
 """, unsafe_allow_html=True)
 
@@ -98,10 +98,17 @@ if menu == "🔎 Inventory Operational Status":
                 q_c = next((c for c in df.columns if 'total' in c.lower() or 'qty' in c.lower()), None)
                 f_c = next((c for c in df.columns if 'func' in c.lower()), None)
                 n_c = next((c for c in df.columns if 'non' in c.lower()), None)
+                v_c = next((c for c in df.columns if 'value' in c.lower()), None)
+                u_c = next((c for c in df.columns if 'unit cost' in c.lower() or 'unitcost' in c.lower()), None)
+
                 for i, row in edited_df.iterrows():
                     sheet_row = int(display_df.index[i]) + 2
+                    # Auto-calculate Values
                     if q_c and f_c and n_c:
                         row[n_c] = row[q_c] - row[f_c]
+                    if q_c and u_c and v_c:
+                        row[v_c] = row[q_c] * row[u_c]
+                        
                     row_to_save = row.drop("🗑️").tolist()
                     inv_ws.update(range_name=f"A{sheet_row}", values=[row_to_save])
                 st.success("Changes synced!"); st.rerun()
@@ -113,11 +120,9 @@ if menu == "🔎 Inventory Operational Status":
                     inv_ws.delete_rows(idx + 2)
                 st.success("Records deleted!"); st.rerun()
 
-# --- 6. MODULE: REGISTRATION (FIXED DYNAMIC DROPDOWNS) ---
+# --- 6. MODULE: REGISTRATION (WITH ASSET VALUE) ---
 elif menu == "📝 Register New Equipment":
     st.subheader("📝 New Asset Onboarding")
-    
-    # These must be OUTSIDE the form to trigger the subsystem update
     col_cat, col_sub = st.columns(2)
     sel_cat = col_cat.selectbox("Major Category", list(AAE_STRUCTURE.keys()))
     sel_sub = col_sub.selectbox("Subsystem", AAE_STRUCTURE[sel_cat])
@@ -133,30 +138,59 @@ elif menu == "📝 Register New Equipment":
         life = col7.number_input("Useful Life (Years)", value=10)
         
         if st.form_submit_button("✅ Add Asset"):
+            total_value = qty * cost
             # Columns 1-12 mapping
-            new_row = [sel_cat, sel_sub, code, unit, qty, "Functional", cost, (qty*cost), life, 0, qty, 0]
+            new_row = [sel_cat, sel_sub, code, unit, qty, "Functional", cost, total_value, life, 0, qty, 0]
             inv_ws.append_row(new_row)
-            st.success("Asset added!"); st.rerun()
+            st.success(f"Asset added! Total Value: {total_value:,.2f}")
+            st.rerun()
 
-# --- 7. DASHBOARD ---
+# --- 7. DASHBOARD (WITH ASSET VALUE & HORIZONTAL CHART) ---
 elif menu == "📊 Dashboard":
-    st.subheader("📊 System Health Analytics")
+    st.subheader("📊 System Health & Financial Analytics")
     if not df.empty:
         c_c = next((c for c in df.columns if 'cat' in c.lower()), None)
         s_c = next((c for c in df.columns if 'sub' in c.lower()), None)
         q_c = next((c for c in df.columns if 'qty' in c.lower() or 'total' in c.lower()), None)
         n_c = next((c for c in df.columns if 'non' in c.lower()), None)
+        v_c = next((c for c in df.columns if 'value' in c.lower()), None)
+
         if c_c and s_c and q_c:
-            m1, m2, m3 = st.columns(3)
-            tot = df[q_c].sum()
-            bad = df[n_c].sum() if n_c else 0
-            m1.metric("Total Assets", int(tot))
-            m2.metric("Operational", int(tot - bad))
-            m3.metric("Faulty (Col 12)", int(bad), delta_color="inverse")
+            m1, m2, m3, m4 = st.columns(4)
+            tot_qty = df[q_c].sum()
+            bad_qty = df[n_c].sum() if n_c else 0
+            tot_val = df[v_c].sum() if v_c else 0
+            
+            m1.metric("Total Assets", int(tot_qty))
+            m2.metric("Operational", int(tot_qty - bad_qty))
+            m3.metric("Faulty (Col 12)", int(bad_qty), delta_color="inverse")
+            m4.metric("Total Asset Value", f"${tot_val:,.2f}")
+
             st.divider()
+            
+            # --- ROW 1: DISTRIBUTION ---
             l, r = st.columns(2)
-            with l: st.plotly_chart(px.sunburst(df, path=[c_c, s_c], values=q_c, title="Asset Distribution"), use_container_width=True)
-            with r: st.plotly_chart(px.bar(df.groupby(c_c)[q_c].sum().reset_index(), x=c_c, y=q_c, title="Category Counts"), use_container_width=True)
+            with l: 
+                st.plotly_chart(px.sunburst(df, path=[c_c, s_c], values=q_c, title="Asset Count Hierarchy"), use_container_width=True)
+            with r: 
+                if v_c:
+                    st.plotly_chart(px.pie(df, values=v_c, names=c_c, hole=.4, title="Financial Value by Category"), use_container_width=True)
+            
+            st.divider()
+            
+            # --- ROW 2: HORIZONTAL CHART BY CATEGORY ---
+            st.markdown("### 📋 Asset Volume by Category")
+            horiz_df = df.groupby(c_c)[q_c].sum().reset_index().sort_values(by=q_c, ascending=True)
+            
+            fig_horiz = px.bar(
+                horiz_df, x=q_c, y=c_c, orientation='h', 
+                title="Total Quantity Distribution",
+                labels={q_c: "Total Quantity", c_c: "Major Category"},
+                color=q_c, color_continuous_scale='Viridis'
+            )
+            st.plotly_chart(fig_horiz, use_container_width=True)
+        else:
+            st.error("Dashboard Column Error: Required headers not found.")
 
 
 
