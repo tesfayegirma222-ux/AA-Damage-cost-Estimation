@@ -73,7 +73,7 @@ st.markdown("""
 
 menu = st.sidebar.radio("Navigation", ["📊 Dashboard", "🔎 Inventory Status", "📝 Register New Equipment", "🛠️ Maintenance History"])
 
-# --- 5. BEAUTIFIED DASHBOARD MODULE ---
+# --- 5. DASHBOARD MODULE ---
 if menu == "📊 Dashboard":
     st.markdown("""
         <style>
@@ -83,7 +83,7 @@ if menu == "📊 Dashboard":
     """, unsafe_allow_html=True)
 
     if not df_inv.empty:
-        # Data logic targeting Column 8 (index 7)
+        # Data logic (Column 8 targeting)
         v_col = df_inv.columns[7] if len(df_inv.columns) >= 8 else None
         q_col = next((c for c in df_inv.columns if 'qty' in c.lower()), df_inv.columns[4])
         f_col = next((c for c in df_inv.columns if 'func' in c.lower()), df_inv.columns[5])
@@ -103,7 +103,8 @@ if menu == "📊 Dashboard":
         l, r = st.columns(2)
         with l:
             st.markdown("### 💰 Value Distribution")
-            fig_pie = px.pie(df_inv, values=v_col, names=c_col, hole=0.5, template="plotly_white", color_discrete_sequence=px.colors.qualitative.Safe)
+            fig_pie = px.pie(df_inv, values=v_col, names=c_col, hole=0.5, template="plotly_white", color_discrete_sequence=px.colors.qualitative.Safe, height=350)
+            fig_pie.update_layout(margin=dict(l=20, r=20, t=20, b=20))
             st.plotly_chart(fig_pie, use_container_width=True)
 
         with r:
@@ -112,8 +113,12 @@ if menu == "📊 Dashboard":
             h_df['Health %'] = (h_df[f_col] / h_df[q_col] * 100).round(1)
             h_df = h_df.sort_values('Health %')
             
-            fig_health = px.bar(h_df, x='Health %', y=c_col, orientation='h', text='Health %', color='Health %', color_continuous_scale='RdYlGn', range_color=[0, 100], template="plotly_white")
+            # Compact sized Bar Chart
+            fig_health = px.bar(h_df, x='Health %', y=c_col, orientation='h', text='Health %', 
+                               color='Health %', color_continuous_scale='RdYlGn', range_color=[0, 100], 
+                               template="plotly_white", height=350)
             fig_health.update_traces(texttemplate='%{text}%', textposition='outside')
+            fig_health.update_layout(margin=dict(l=20, r=20, t=20, b=20), yaxis_title=None, xaxis_title=None)
             st.plotly_chart(fig_health, use_container_width=True)
 
         st.divider()
@@ -122,21 +127,23 @@ if menu == "📊 Dashboard":
             fig_sun = px.sunburst(df_maint, path=['Category', 'Subsystem', 'Failure Cause'], color='Category', template="plotly_white")
             st.plotly_chart(fig_sun, use_container_width=True)
 
-# --- 6. REMAINING MODULES (Kept Intact) ---
+# --- 6. REGISTRATION MODULE ---
 elif menu == "📝 Register New Equipment":
     st.subheader("📝 New Asset Registration")
     with st.form("reg_form", clear_on_submit=True):
-        c1, c2 = st.columns(2)
-        cat = c1.selectbox("Category", list(AAE_STRUCTURE.keys()))
-        sub = c2.selectbox("Subsystem", AAE_STRUCTURE[cat])
+        col1, col2 = st.columns(2)
+        cat = col1.selectbox("Category", list(AAE_STRUCTURE.keys()))
+        sub = col2.selectbox("Subsystem", AAE_STRUCTURE[cat])
         code = st.text_input("Asset Code")
         qty = st.number_input("Quantity", min_value=1)
         cost = st.number_input("Unit Cost (ETB)", min_value=0.0)
         if st.form_submit_button("✅ Register Asset"):
             total_v = qty * cost
+            # Matching Spreadsheet Columns
             inv_ws.append_row([cat, sub, code, "Nos", qty, qty, cost, total_v, 10, 0, 0])
-            st.success(f"Registered! Value: {total_v:,.2f} Br"); st.rerun()
+            st.success(f"Registered! Column 8 Value: {total_v:,.2f} Br"); st.rerun()
 
+# --- 7. INVENTORY STATUS ---
 elif menu == "🔎 Inventory Status":
     st.subheader("🔎 Master Registry")
     if not df_inv.empty:
@@ -145,6 +152,7 @@ elif menu == "🔎 Inventory Status":
             inv_ws.update([edited_df.columns.values.tolist()] + edited_df.values.tolist())
             st.success("Synced!"); st.rerun()
 
+# --- 8. MAINTENANCE HISTORY ---
 elif menu == "🛠️ Maintenance History":
     st.subheader("🛠️ Technical Failure Log")
     with st.expander("🚨 Report Failure"):
@@ -157,6 +165,7 @@ elif menu == "🛠️ Maintenance History":
                 maint_ws.append_row([datetime.now().strftime("%Y-%m-%d"), m_cat, m_sub, m_code, m_cause, "System", "Pending"])
                 st.success("Logged!"); st.rerun()
     st.dataframe(df_maint, use_container_width=True)
+
 
 
 
