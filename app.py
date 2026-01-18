@@ -46,8 +46,8 @@ def init_connection():
         try:
             maint = sh.worksheet("Maintenance_Log")
         except:
-            maint = sh.add_worksheet(title="Maintenance_Log", rows="1000", cols="10")
-            maint.append_row(["Date", "Category", "Subsystem", "Asset Code", "Failure Cause", "Technician", "Status"])
+            maint = sh.add_worksheet(title="Maintenance_Log", rows="1000", cols="6")
+            maint.append_row(["Date", "Category", "Subsystem", "Asset Code", "Failure Cause", "Technician"])
         return inv, maint
     except Exception as e:
         st.error(f"Connection Error: {e}")
@@ -103,7 +103,7 @@ if menu == "📊 Dashboard":
         l, r = st.columns(2)
         with l:
             st.markdown("### 💰 Investment Breakdown")
-            fig_pie = px.pie(df_inv, values=v_col, names=c_col, hole=0.5, height=350)
+            fig_pie = px.pie(df_inv, values=v_col, names=c_col, hole=0.5, height=350, template="plotly_white")
             st.plotly_chart(fig_pie, use_container_width=True)
         with r:
             st.markdown("### 🛠️ Operational Health Score (%)")
@@ -111,24 +111,21 @@ if menu == "📊 Dashboard":
             h_df['Health %'] = (h_df[f_col] / h_df[q_col] * 100).round(1)
             fig_h = px.bar(h_df.sort_values('Health %'), x='Health %', y=c_col, orientation='h', 
                            text='Health %', color='Health %', color_continuous_scale='RdYlGn', 
-                           height=350)
+                           height=350, template="plotly_white")
             fig_h.update_traces(texttemplate='%{text}%', textposition='outside')
+            fig_h.update_layout(yaxis_title=None, xaxis_title=None)
             st.plotly_chart(fig_h, use_container_width=True)
 
 # --- 7. DYNAMIC REGISTRATION MODULE ---
 elif menu == "📝 Register New Equipment":
     st.subheader("📝 New Asset Registration")
-    st.info("Select a category to see its specific subsystems.")
-    
-    # Selection logic outside the form to enable reactivity
     reg_col1, reg_col2 = st.columns(2)
     sel_reg_cat = reg_col1.selectbox("Major Category", list(AAE_STRUCTURE.keys()))
-    sub_options = AAE_STRUCTURE.get(sel_reg_cat, [])
-    sel_reg_sub = reg_col2.selectbox("Subsystem", sub_options)
+    sel_reg_sub = reg_col2.selectbox("Subsystem", AAE_STRUCTURE.get(sel_reg_cat, []))
 
     with st.form("reg_form", clear_on_submit=True):
         col_c, col_d, col_e = st.columns(3)
-        reg_code = col_c.text_input("Asset Code (Unique ID)")
+        reg_code = col_c.text_input("Asset Code")
         reg_qty = col_d.number_input("Total Quantity", min_value=1, step=1)
         reg_cost = col_e.number_input("Unit Cost (ETB)", min_value=0.0, format="%.2f")
         
@@ -137,17 +134,12 @@ elif menu == "📝 Register New Equipment":
         reg_life = col_g.number_input("Useful Life (Years)", min_value=1, value=10)
         
         if st.form_submit_button("✅ Register Asset"):
-            if not reg_code:
-                st.error("Asset Code is required.")
-            else:
-                total_val = reg_qty * reg_cost
-                # Matches AAE Column Layout: Cat, Sub, Code, Unit, Qty, Func(Initial=Qty), Cost, TotalValue(Col8), Life, Age(0), NonFunc(0)
-                new_asset = [sel_reg_cat, sel_reg_sub, reg_code, reg_unit, reg_qty, reg_qty, reg_cost, total_val, reg_life, 0, 0]
-                inv_ws.append_row(new_asset)
-                st.success(f"Successfully Registered {reg_code}! System Value: {total_val:,.2f} Br")
-                st.rerun()
+            total_val = reg_qty * reg_cost
+            new_asset = [sel_reg_cat, sel_reg_sub, reg_code, reg_unit, reg_qty, reg_qty, reg_cost, total_val, reg_life, 0, 0]
+            inv_ws.append_row(new_asset)
+            st.success(f"Registered {reg_code} successfully!"); st.rerun()
 
-# --- 8. DYNAMIC MAINTENANCE LOG ---
+# --- 8. DYNAMIC MAINTENANCE LOG (REMOVED STATUS) ---
 elif menu == "🛠️ Maintenance History":
     st.subheader("🛠️ Technical RCA Maintenance Log")
     with st.expander("🚨 Log Equipment Failure", expanded=True):
@@ -163,8 +155,9 @@ elif menu == "🛠️ Maintenance History":
             
             if st.form_submit_button("Submit Technical Report"):
                 if m_code and m_tech:
-                    maint_ws.append_row([datetime.now().strftime("%Y-%m-%d"), m_cat, m_sub, m_code, m_cause, m_tech, "Pending"])
-                    st.success("Log successful!"); st.rerun()
+                    # Logged columns: Date, Category, Subsystem, Asset Code, Failure Cause, Technician
+                    maint_ws.append_row([datetime.now().strftime("%Y-%m-%d"), m_cat, m_sub, m_code, m_cause, m_tech])
+                    st.success("Log submitted!"); st.rerun()
 
 elif menu == "🔎 Inventory Status":
     st.subheader("🔎 Master Registry")
@@ -173,6 +166,7 @@ elif menu == "🔎 Inventory Status":
         if st.button("💾 Sync Database"):
             inv_ws.update([edited_df.columns.values.tolist()] + edited_df.values.tolist())
             st.success("Synced!"); st.rerun()
+
 
 
 
