@@ -136,7 +136,7 @@ if check_password():
 
             st.divider()
 
-            # --- LIFE-AGE ANALYSIS (BY SUBSYSTEM) ---
+            # --- LIFE-AGE ANALYSIS ---
             st.markdown("#### ⏳ Asset Life-Age & Sustainability Analysis (by Subsystem)")
             col_age1, col_age2 = st.columns([6, 4])
             with col_age1:
@@ -178,27 +178,33 @@ if check_password():
 
             st.divider()
 
-            # --- UPDATED: PROFESSIONAL RCA BAR CHART BY CATEGORY ---
-            st.markdown("#### 🎯 Root Cause Analysis (RCA) - Frequency by Category")
+            # --- UPDATED: RCA PERCENTAGE DIVIDED BY CATEGORY ---
+            st.markdown("#### 🎯 Root Cause Analysis (RCA) - Percentage Breakdown by Category")
             if not df_maint.empty:
-                # Grouping by 'Category' as requested
-                rca_counts = df_maint['Category'].value_counts().reset_index()
-                rca_counts.columns = ['Category', 'Count']
-                total_fails = rca_counts['Count'].sum()
-                rca_counts['Percentage'] = (rca_counts['Count'] / total_fails * 100).round(1)
-
-                fig_rca = px.bar(rca_counts.sort_values('Count', ascending=True), 
-                                 x='Count', y='Category', orientation='h',
-                                 text=rca_counts.apply(lambda x: f"{x['Count']} ({x['Percentage']}%)", axis=1),
-                                 color='Count', color_continuous_scale='Reds')
+                # Group by Category and Root Cause
+                rca_data = df_maint.groupby(['Category', 'Failure Cause']).size().reset_index(name='Incidents')
                 
-                fig_rca.update_traces(textposition='outside', cliponaxis=False)
+                # Calculate Total incidents per Category for the percentage divisor
+                cat_totals = df_maint.groupby('Category').size().reset_index(name='Total_Cat_Incidents')
+                rca_final = rca_data.merge(cat_totals, on='Category')
+                
+                # Calculate % of failures within that specific Category
+                rca_final['Cat_Percentage'] = (rca_final['Incidents'] / rca_final['Total_Cat_Incidents'] * 100).round(1)
+
+                fig_rca = px.bar(rca_final, 
+                                 x='Cat_Percentage', y='Category', color='Failure Cause',
+                                 orientation='h',
+                                 text=rca_final.apply(lambda x: f"{x['Failure Cause']}: {x['Cat_Percentage']}%", axis=1),
+                                 title="Root Cause Distribution within Categories",
+                                 color_discrete_sequence=px.colors.qualitative.Pastel)
+                
+                fig_rca.update_traces(textposition='inside')
                 fig_rca.update_layout(
-                    xaxis_title="Number of Incidents", 
+                    xaxis_title="Percentage of Category Total Failures (%)", 
                     yaxis_title=None,
-                    height=450,
-                    coloraxis_showscale=False,
-                    margin=dict(l=20, r=100, t=20, b=20)
+                    height=500,
+                    barmode='stack',
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
                 )
                 st.plotly_chart(fig_rca, use_container_width=True)
 
@@ -235,6 +241,7 @@ if check_password():
         if st.button("💾 Sync Database"):
             inv_ws.update([edited_df.columns.values.tolist()] + edited_df.values.tolist())
             st.success("Database synced!"); st.rerun()
+
 
 
 
