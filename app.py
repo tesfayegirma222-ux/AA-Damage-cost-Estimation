@@ -29,7 +29,7 @@ RCA_STANDARDS = {
     "HVAC System": ["Refrigerant Leak", "Compressor Failure", "Thermostat Fault", "Filter Clogging"],
     "Illumination System": ["Lamp Burnout", "Ballast Failure", "Photocell Sensor Clogged", "Cable Fault"],
     "Electronic Display System": ["LED Module Pixel Loss", "Comm Card Timeout", "SPS Fault", "Controller Hang-up"],
-    "Pump System": ["Dry Run Trip", "Impeller Clogging", "Seal Leak", "Bearing Failure", "Float Switch Stuck"],
+    "Pump System": ["Dry Run Protection", "Impeller Clogging", "Seal Leak", "Bearing Failure", "Float Switch Stuck"],
     "Overload System (WIM)": ["Load Cell Drift", "Piezo Damage", "Interface Card Fault", "Signal Noise"],
     "General": ["Vandalism", "Physical Accident", "Extreme Weather", "Wear & Tear"]
 }
@@ -43,13 +43,11 @@ def init_connection():
         client = gspread.authorize(creds)
         sh = client.open_by_url(st.secrets["SHEET_URL"])
         
-        # Main Inventory Sheet
         try:
             inv = sh.worksheet("Sheet1")
         except:
             inv = sh.get_worksheet(0)
             
-        # Maintenance Log Sheet
         try:
             maint = sh.worksheet("Maintenance_Log")
         except:
@@ -112,7 +110,6 @@ if menu == "📊 Smart Dashboard":
         f_col = next((c for c in df_inv.columns if 'func' in c.lower()), df_inv.columns[5])
         c_col = df_inv.columns[0]
         
-        # Metrics
         k1, k2, k3, k4 = st.columns(4)
         val_sum = float(df_inv[v_col].sum())
         qty_sum = float(df_inv[q_col].sum())
@@ -136,20 +133,24 @@ if menu == "📊 Smart Dashboard":
         with col_right:
             st.markdown("#### ⚡ System Health Score")
             h_df = df_inv.groupby(c_col).agg({q_col: 'sum', f_col: 'sum'}).reset_index()
-            h_df['Health %'] = (h_df[f_col] / h_df[q_col] * 100).round(1)
+            h_df['Health %'] = (h_df[f_col] / h_df[q_col] * 100).round(1).fillna(0)
+            
             fig_bar = px.bar(h_df.sort_values('Health %'), x='Health %', y=c_col, orientation='h', 
-                             text='Health %', color='Health %', color_continuous_scale='RdYlGn', range_x=[0, 115])
-            fig_bar.update_traces(textposition='outside')
-            fig_bar.update_layout(yaxis_title=None, xaxis_visible=False, height=350, margin=dict(t=20, b=20))
+                             text='Health %', color='Health %', 
+                             color_continuous_scale='RdYlGn', range_x=[0, 120])
+            fig_bar.update_traces(texttemplate='%{text}%', textposition='outside', 
+                                  marker_line_color='rgb(30, 58, 138)', marker_line_width=1.5)
+            fig_bar.update_layout(yaxis_title=None, xaxis_visible=False, height=350, 
+                                  margin=dict(t=20, b=20), coloraxis_showscale=False,
+                                  plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)')
             st.plotly_chart(fig_bar, use_container_width=True)
 
-# --- 7. DYNAMIC ADD ASSET (TO SHEET1) ---
+# --- 7. DYNAMIC ADD ASSET ---
 elif menu == "📝 Add New Asset":
     st.subheader("📝 New Equipment Registration")
     c1, c2 = st.columns(2)
     sel_cat = c1.selectbox("Major Category", list(AAE_STRUCTURE.keys()))
-    sel_sub = c2.selectbox("Subsystem", AAE_STRUCTURE[sel_cat])
-    
+    sel_sub = c2.selectbox("Subsystem", AAE_STRUCTURE.get(sel_cat, []))
     with st.form("reg_form", clear_on_submit=True):
         f1, f2, f3 = st.columns(3)
         a_code = f1.text_input("Asset Code")
@@ -159,16 +160,13 @@ elif menu == "📝 Add New Asset":
             if a_code:
                 inv_ws.append_row([sel_cat, sel_sub, a_code, "Nos", a_qty, a_qty, a_cost, a_qty*a_cost, 10, 0, 0])
                 st.success(f"Asset {a_code} Registered!"); st.rerun()
-            else:
-                st.error("Missing Asset Code")
 
 # --- 8. DYNAMIC FAILURE LOGS ---
 elif menu == "🛠️ Failure Logs":
     st.subheader("🛠️ Technical Incident Logging")
     l1, l2 = st.columns(2)
     m_cat = l1.selectbox("Major Category", list(AAE_STRUCTURE.keys()))
-    m_sub = l2.selectbox("Subsystem", AAE_STRUCTURE[m_cat])
-    
+    m_sub = l2.selectbox("Subsystem", AAE_STRUCTURE.get(m_cat, []))
     with st.form("maint_form", clear_on_submit=True):
         m_cause = st.selectbox("Root Cause", RCA_STANDARDS.get(m_cat, []) + RCA_STANDARDS["General"])
         m_code = st.text_input("Asset Code")
@@ -177,7 +175,6 @@ elif menu == "🛠️ Failure Logs":
             if m_code and m_tech:
                 maint_ws.append_row([datetime.now().strftime("%Y-%m-%d"), m_cat, m_sub, m_code, m_cause, m_tech])
                 st.success("Incident Logged!"); st.rerun()
-
     st.divider()
     if not df_maint.empty:
         st.dataframe(df_maint.sort_values(by=df_maint.columns[0], ascending=False), use_container_width=True, hide_index=True)
@@ -189,6 +186,7 @@ elif menu == "🔎 Asset Registry":
         if st.button("💾 Sync Sheet1"):
             inv_ws.update([edited_df.columns.values.tolist()] + edited_df.values.tolist())
             st.success("Data Synced!"); st.rerun()
+
 
 
 
