@@ -54,7 +54,6 @@ def load_data(worksheet):
     headers = [str(h).strip() for h in data[0]]
     df = pd.DataFrame(data[1:], columns=headers)
     
-    # Process numeric columns (Targeting Column 8/Index 7 for Value)
     for i, col in enumerate(df.columns):
         if any(k in col.lower() for k in ['qty', 'total', 'cost', 'value', 'func']) or i == 7:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
@@ -66,68 +65,78 @@ df_inv = load_data(inv_ws)
 df_maint = load_data(maint_ws)
 
 st.markdown("""
-    <div style="background: #1E3A8A; color: white; padding: 15px; border-radius: 10px; text-align: center; margin-bottom: 20px;">
-        <h2 style="margin:0;">Addis Ababa-Adama Expressway</h2>
-        <p style="margin:0;">Electromechanical Master Database (Live Status)</p>
+    <div style="background: #1E3A8A; color: white; padding: 20px; border-radius: 15px; text-align: center; margin-bottom: 25px;">
+        <h1 style="margin:0; font-size: 28px;">Addis Ababa-Adama Expressway</h1>
+        <p style="margin:0; opacity: 0.8;">Electromechanical Asset Management & Analytics Portal</p>
     </div>
 """, unsafe_allow_html=True)
 
 menu = st.sidebar.radio("Navigation", ["📊 Dashboard", "🔎 Inventory Status", "📝 Register New Equipment", "🛠️ Maintenance History"])
 
-# --- 5. DASHBOARD MODULE ---
+# --- 5. BEAUTIFIED DASHBOARD MODULE ---
 if menu == "📊 Dashboard":
-    st.subheader("📊 System Health & Financial Analytics")
+    st.markdown("""
+        <style>
+        [data-testid="stMetricValue"] { font-size: 32px; color: #1E3A8A; }
+        .chart-container { background-color: #ffffff; padding: 15px; border-radius: 10px; border: 1px solid #e6e9ef; }
+        </style>
+    """, unsafe_allow_html=True)
+
     if not df_inv.empty:
-        # Identify columns by index/name
+        # Data logic targeting Column 8 (index 7)
         v_col = df_inv.columns[7] if len(df_inv.columns) >= 8 else None
         q_col = next((c for c in df_inv.columns if 'qty' in c.lower()), df_inv.columns[4])
         f_col = next((c for c in df_inv.columns if 'func' in c.lower()), df_inv.columns[5])
         c_col = df_inv.columns[0]
         
-        # Metrics
+        # Top KPI Metrics
         m1, m2, m3 = st.columns(3)
         total_val = df_inv[v_col].sum() if v_col else 0
-        m1.metric("Total Asset Value", f"{total_val:,.2f} Br")
-        m2.metric("Total Assets (Qty)", int(df_inv[q_col].sum()))
-        
+        m1.metric("💰 Total Asset Value (Col 8)", f"{total_val:,.2f} Br")
+        m2.metric("📦 Inventory Count", int(df_inv[q_col].sum()))
         health_overall = (df_inv[f_col].sum() / df_inv[q_col].sum() * 100) if df_inv[q_col].sum() > 0 else 0
-        m3.metric("Overall System Health", f"{health_overall:.1f}%")
+        m3.metric("🏥 Overall System Health", f"{health_overall:.1f}%")
 
         st.divider()
+
+        # Visual Charts
         l, r = st.columns(2)
         with l:
-            st.markdown("#### 💰 Financial Weight (Col 8)")
-            st.plotly_chart(px.pie(df_inv, values=v_col, names=c_col, hole=0.4), use_container_width=True)
+            st.markdown("### 💰 Value Distribution")
+            fig_pie = px.pie(df_inv, values=v_col, names=c_col, hole=0.5, template="plotly_white", color_discrete_sequence=px.colors.qualitative.Safe)
+            st.plotly_chart(fig_pie, use_container_width=True)
 
         with r:
-            st.markdown("#### 🛠️ Operational Health Score (%)")
+            st.markdown("### 🛠️ Operational Health Score (%)")
             h_df = df_inv.groupby(c_col).agg({q_col: 'sum', f_col: 'sum'}).reset_index()
             h_df['Health %'] = (h_df[f_col] / h_df[q_col] * 100).round(1)
             h_df = h_df.sort_values('Health %')
             
-            # Bar Chart with explicit score labels
-            fig_health = px.bar(h_df, x='Health %', y=c_col, orientation='h', 
-                               text='Health %', color='Health %', 
-                               color_continuous_scale='RdYlGn', range_color=[0, 100])
+            fig_health = px.bar(h_df, x='Health %', y=c_col, orientation='h', text='Health %', color='Health %', color_continuous_scale='RdYlGn', range_color=[0, 100], template="plotly_white")
             fig_health.update_traces(texttemplate='%{text}%', textposition='outside')
             st.plotly_chart(fig_health, use_container_width=True)
 
-# --- 6. REGISTRY MODULE ---
+        st.divider()
+        st.markdown("### 🔍 Root Cause Analysis (RCA)")
+        if not df_maint.empty:
+            fig_sun = px.sunburst(df_maint, path=['Category', 'Subsystem', 'Failure Cause'], color='Category', template="plotly_white")
+            st.plotly_chart(fig_sun, use_container_width=True)
+
+# --- 6. REMAINING MODULES (Kept Intact) ---
 elif menu == "📝 Register New Equipment":
     st.subheader("📝 New Asset Registration")
     with st.form("reg_form", clear_on_submit=True):
-        col1, col2 = st.columns(2)
-        cat = col1.selectbox("Category", list(AAE_STRUCTURE.keys()))
-        sub = col2.selectbox("Subsystem", AAE_STRUCTURE[cat])
+        c1, c2 = st.columns(2)
+        cat = c1.selectbox("Category", list(AAE_STRUCTURE.keys()))
+        sub = c2.selectbox("Subsystem", AAE_STRUCTURE[cat])
         code = st.text_input("Asset Code")
         qty = st.number_input("Quantity", min_value=1)
         cost = st.number_input("Unit Cost (ETB)", min_value=0.0)
-        if st.form_submit_button("✅ Register"):
+        if st.form_submit_button("✅ Register Asset"):
             total_v = qty * cost
             inv_ws.append_row([cat, sub, code, "Nos", qty, qty, cost, total_v, 10, 0, 0])
-            st.success(f"Registered {code} at {total_v:,.2f} Br"); st.rerun()
+            st.success(f"Registered! Value: {total_v:,.2f} Br"); st.rerun()
 
-# --- 7. INVENTORY STATUS ---
 elif menu == "🔎 Inventory Status":
     st.subheader("🔎 Master Registry")
     if not df_inv.empty:
@@ -136,7 +145,6 @@ elif menu == "🔎 Inventory Status":
             inv_ws.update([edited_df.columns.values.tolist()] + edited_df.values.tolist())
             st.success("Synced!"); st.rerun()
 
-# --- 8. MAINTENANCE HISTORY ---
 elif menu == "🛠️ Maintenance History":
     st.subheader("🛠️ Technical Failure Log")
     with st.expander("🚨 Report Failure"):
@@ -149,6 +157,7 @@ elif menu == "🛠️ Maintenance History":
                 maint_ws.append_row([datetime.now().strftime("%Y-%m-%d"), m_cat, m_sub, m_code, m_cause, "System", "Pending"])
                 st.success("Logged!"); st.rerun()
     st.dataframe(df_maint, use_container_width=True)
+
 
 
 
