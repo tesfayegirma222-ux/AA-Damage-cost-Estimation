@@ -18,7 +18,7 @@ def check_password():
             st.session_state["password_correct"] = False
 
     if "password_correct" not in st.session_state:
-        st.markdown("<div style='text-align: center; padding: 20px;'><h2 style='color: #1e3a8a;'>AAE Executive Portal</h2><p>Electromechanical Master Database Login</p></div>", unsafe_allow_html=True)
+        st.markdown("<div style='text-align: center; padding: 20px;'><h2 style='color: #1e3a8a;'>AAE Executive Portal</h2><p>AA Electromechanical Asset Master Database Login</p></div>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1,2,1])
         with col2:
             st.text_input("Username", key="username")
@@ -87,8 +87,8 @@ if check_password():
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
         return df
 
-    st.set_page_config(page_title="AAE Executive Portal", layout="wide")
-    logo_url = "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a2/Logo_of_the_Addis_Ababa%E2%80%93Adama_Expressway.png/300px-Logo_of_the_Addis_Ababa%E2%80%93Adama_Expressway.png"
+    st.set_page_config(page_title="AAE EMA Portal", layout="wide")
+    logo_url = "https://skilled-sapphire-ragpx5z8le.edgeone.app/images.jpg"
     st.sidebar.image(logo_url, use_container_width=True)
 
     st.markdown("""
@@ -106,7 +106,7 @@ if check_password():
         </style>
         <div class="main-header">
             <h1 style="margin:0; font-size: 24px;">AAE ELECTROMECHANICAL EXECUTIVE PORTAL</h1>
-            <p style="margin:0; opacity: 0.9;">Strategic Asset Management & RCA Dashboard</p>
+            <p style="margin:0; opacity: 0.9;">Strategic EM Asset Management & RCA Dashboard</p>
         </div>
     """, unsafe_allow_html=True)
 
@@ -241,6 +241,7 @@ if check_password():
         if st.button("💾 Sync Database"):
             inv_ws.update([edited_df.columns.values.tolist()] + edited_df.values.tolist())
             st.success("Database synced!"); st.rerun()
+
 
 
 
