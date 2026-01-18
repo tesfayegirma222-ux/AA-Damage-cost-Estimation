@@ -135,6 +135,7 @@ if check_password():
         else:
             # Mapping columns based on typical sheet structure
             v_col, q_col, f_col, c_col = df_inv.columns[7], df_inv.columns[4], df_inv.columns[5], df_inv.columns[0]
+            s_col = df_inv.columns[1] # SUBSYSTEM COLUMN
             life_col, used_col = df_inv.columns[8], df_inv.columns[9]
             
             # Metrics
@@ -152,7 +153,6 @@ if check_password():
             col_age1, col_age2 = st.columns([6, 4])
             
             with col_age1:
-                # Calculate Remaining Life Percentage
                 df_inv['Remaining %'] = ((df_inv[life_col] - df_inv[used_col]) / df_inv[life_col] * 100).clip(0, 100).fillna(0)
                 fig_age = px.scatter(df_inv, x=used_col, y='Remaining %', size=v_col, color=c_col,
                                      hover_name=df_inv.columns[2], 
@@ -186,15 +186,17 @@ if check_password():
                 st.plotly_chart(fig_bar, use_container_width=True)
 
             with r_col:
-                st.markdown("#### 💎 Asset Valuation")
-                fig_pie = px.pie(df_inv, values=v_col, names=c_col, hole=0.5, color_discrete_sequence=px.colors.qualitative.Prism)
+                st.markdown("#### 💎 Asset Valuation by Subsystem")
+                # CHANGED names FROM c_col (Category) TO s_col (Subsystem)
+                fig_pie = px.pie(df_inv, values=v_col, names=s_col, hole=0.5, color_discrete_sequence=px.colors.qualitative.Prism)
+                fig_pie.update_traces(textinfo='percent+label')
                 st.plotly_chart(fig_pie, use_container_width=True)
 
             st.divider()
             st.markdown("#### 🎯 Root Cause Analysis (RCA) Hierarchy")
             if not df_maint.empty:
                 fig_sun = px.sunburst(df_maint, path=['Category', 'Subsystem', 'Failure Cause'], color='Category', 
-                                     color_discrete_sequence=px.colors.qualitative.Pastel)
+                                      color_discrete_sequence=px.colors.qualitative.Pastel)
                 st.plotly_chart(fig_sun, use_container_width=True)
 
     # --- 6. REGISTRATION MODULE ---
@@ -233,6 +235,7 @@ if check_password():
         if st.button("💾 Sync Database"):
             inv_ws.update([edited_df.columns.values.tolist()] + edited_df.values.tolist())
             st.success("Database synced!"); st.rerun()
+
 
 
 
