@@ -5,7 +5,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 from datetime import datetime
 
-# --- 0. AUTHENTICATION SYSTEM (FIXED & SECURE) ---
+# --- 0. AUTHENTICATION SYSTEM (STABLE & SECURE) ---
 def check_password():
     """Returns `True` if the user had the correct password."""
     def password_entered():
@@ -70,12 +70,7 @@ if check_password():
             creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
             client = gspread.authorize(creds)
             sh = client.open_by_url(st.secrets["SHEET_URL"])
-            
-            try:
-                inv = sh.worksheet("Sheet1")
-            except:
-                inv = sh.get_worksheet(0)
-                
+            inv = sh.worksheet("Sheet1")
             try:
                 maint = sh.worksheet("Maintenance_Log")
             except:
@@ -96,14 +91,12 @@ if check_password():
         headers = [str(h).strip() for h in data[0]]
         df = pd.DataFrame(data[1:], columns=headers)
         for i, col in enumerate(df.columns):
-            if any(k in col.lower() for k in ['qty', 'total', 'cost', 'value', 'func']) or i == 7:
+            if any(k in col.lower() for k in ['qty', 'total', 'cost', 'value', 'func', 'life', 'age']):
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
         return df
 
     # --- 4. UI STYLING & SIDEBAR ---
     st.set_page_config(page_title="AAE Executive Portal", layout="wide")
-    
-    # Sidebar Logo
     logo_url = "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a2/Logo_of_the_Addis_Ababa%E2%80%93Adama_Expressway.png/300px-Logo_of_the_Addis_Ababa%E2%80%93Adama_Expressway.png"
     st.sidebar.image(logo_url, use_container_width=True)
 
@@ -129,7 +122,6 @@ if check_password():
     df_inv = load_data(inv_ws)
     df_maint = load_data(maint_ws)
 
-    # Logout Button
     if st.sidebar.button("🔓 Logout"):
         st.session_state["password_correct"] = False
         st.rerun()
@@ -139,9 +131,11 @@ if check_password():
     # --- 5. SMART DASHBOARD ---
     if menu == "📊 Smart Dashboard":
         if df_inv.empty:
-            st.info("Inventory is empty. Please register assets to view dashboard.")
+            st.info("Inventory is empty. Please register assets.")
         else:
+            # Mapping columns based on typical sheet structure
             v_col, q_col, f_col, c_col = df_inv.columns[7], df_inv.columns[4], df_inv.columns[5], df_inv.columns[0]
+            life_col, used_col = df_inv.columns[8], df_inv.columns[9]
             
             # Metrics
             k1, k2, k3, k4 = st.columns(4)
@@ -152,37 +146,55 @@ if check_password():
             k4.metric("🚨 Total Failures", len(df_maint) if not df_maint.empty else 0)
 
             st.divider()
+
+            # --- LIFE-AGE ANALYSIS SECTION ---
+            st.markdown("#### ⏳ Asset Life-Age & Sustainability Analysis")
+            col_age1, col_age2 = st.columns([6, 4])
             
-            # Visuals Row 1
+            with col_age1:
+                # Calculate Remaining Life Percentage
+                df_inv['Remaining %'] = ((df_inv[life_col] - df_inv[used_col]) / df_inv[life_col] * 100).clip(0, 100).fillna(0)
+                fig_age = px.scatter(df_inv, x=used_col, y='Remaining %', size=v_col, color=c_col,
+                                     hover_name=df_inv.columns[2], 
+                                     labels={used_col: "Years in Service", 'Remaining %': "Remaining Useful Life (%)"},
+                                     title="Asset Replacement Matrix (Size = Investment Value)")
+                fig_age.add_hline(y=20, line_dash="dot", line_color="red", annotation_text="Critical Zone")
+                fig_age.update_layout(height=400, plot_bgcolor='white')
+                st.plotly_chart(fig_age, use_container_width=True)
+
+            with col_age2:
+                avg_rem = df_inv['Remaining %'].mean()
+                fig_gauge = px.pie(values=[avg_rem, 100-avg_rem], names=['Remaining', 'Consumed'], hole=0.7,
+                                   color_discrete_sequence=['#10b981', '#f1f5f9'])
+                fig_gauge.update_layout(showlegend=False, height=350, 
+                                        annotations=[dict(text=f"{avg_rem:.1f}%<br>Life<br>Remaining", x=0.5, y=0.5, font_size=18, showarrow=False)])
+                st.plotly_chart(fig_gauge, use_container_width=True)
+
+            st.divider()
+            
+            # Health and Distribution Row
             l_col, r_col = st.columns([1, 1])
             with l_col:
                 st.markdown("#### ⚡ System Health (High Visibility)")
                 h_df = df_inv.groupby(c_col).agg({q_col: 'sum', f_col: 'sum'}).reset_index()
                 h_df['Health %'] = (h_df[f_col] / h_df[q_col] * 100).round(1).fillna(0)
-                
-                # BAR CHART UPDATED TO GREEN
                 fig_bar = px.bar(h_df.sort_values('Health %'), x='Health %', y=c_col, orientation='h', 
                                  text='Health %', color='Health %', color_continuous_scale='Greens', range_x=[0, 125])
                 fig_bar.update_traces(texttemplate='%{text}%', textposition='outside', 
-                                      marker_line_color='#064e3b', marker_line_width=1.5,
-                                      marker_color='#10b981')
-                fig_bar.update_layout(yaxis_title=None, xaxis_visible=False, height=400, coloraxis_showscale=False,
-                                      plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)')
+                                      marker_line_color='#064e3b', marker_line_width=1.5, marker_color='#10b981')
+                fig_bar.update_layout(yaxis_title=None, xaxis_visible=False, height=400, coloraxis_showscale=False)
                 st.plotly_chart(fig_bar, use_container_width=True)
 
             with r_col:
                 st.markdown("#### 💎 Asset Valuation")
                 fig_pie = px.pie(df_inv, values=v_col, names=c_col, hole=0.5, color_discrete_sequence=px.colors.qualitative.Prism)
-                fig_pie.update_layout(height=400)
                 st.plotly_chart(fig_pie, use_container_width=True)
 
             st.divider()
-            # Visual Row 2: RCA Hierarchy
             st.markdown("#### 🎯 Root Cause Analysis (RCA) Hierarchy")
             if not df_maint.empty:
                 fig_sun = px.sunburst(df_maint, path=['Category', 'Subsystem', 'Failure Cause'], color='Category', 
                                      color_discrete_sequence=px.colors.qualitative.Pastel)
-                fig_sun.update_layout(height=500)
                 st.plotly_chart(fig_sun, use_container_width=True)
 
     # --- 6. REGISTRATION MODULE ---
@@ -196,9 +208,8 @@ if check_password():
             a_qty = st.number_input("Quantity", min_value=1)
             a_cost = st.number_input("Unit Cost (Br)", min_value=0.0)
             if st.form_submit_button("🚀 Commit to Sheet1"):
-                if a_code:
-                    inv_ws.append_row([sel_cat, sel_sub, a_code, "Nos", a_qty, a_qty, a_cost, a_qty*a_cost, 10, 0, 0])
-                    st.success(f"Asset {a_code} Registered!"); st.rerun()
+                inv_ws.append_row([sel_cat, sel_sub, a_code, "Nos", a_qty, a_qty, a_cost, a_qty*a_cost, 10, 0, 0])
+                st.success("Registered!"); st.rerun()
 
     # --- 7. FAILURE LOGGING MODULE ---
     elif menu == "🛠️ Failure Logs":
@@ -211,20 +222,18 @@ if check_password():
             m_code = st.text_input("Asset Code")
             m_tech = st.text_input("Technician Name")
             if st.form_submit_button("⚠️ Log Incident"):
-                if m_code and m_tech:
-                    maint_ws.append_row([datetime.now().strftime("%Y-%m-%d"), m_cat, m_sub, m_code, m_cause, m_tech])
-                    st.success("Log recorded!"); st.rerun()
-        st.divider()
+                maint_ws.append_row([datetime.now().strftime("%Y-%m-%d"), m_cat, m_sub, m_code, m_cause, m_tech])
+                st.success("Log recorded!"); st.rerun()
         st.dataframe(df_maint, use_container_width=True, hide_index=True)
 
     # --- 8. REGISTRY MANAGEMENT ---
     elif menu == "🔎 Asset Registry":
         st.subheader("🔎 Master Registry (Sheet1)")
-        if not df_inv.empty:
-            edited_df = st.data_editor(df_inv, use_container_width=True, hide_index=True)
-            if st.button("💾 Sync Database"):
-                inv_ws.update([edited_df.columns.values.tolist()] + edited_df.values.tolist())
-                st.success("Sheet1 successfully synced!"); st.rerun()
+        edited_df = st.data_editor(df_inv, use_container_width=True, hide_index=True)
+        if st.button("💾 Sync Database"):
+            inv_ws.update([edited_df.columns.values.tolist()] + edited_df.values.tolist())
+            st.success("Database synced!"); st.rerun()
+
 
 
 
