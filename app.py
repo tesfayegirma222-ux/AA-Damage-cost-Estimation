@@ -124,7 +124,7 @@ if check_password():
             st.info("Inventory is empty. Please register assets.")
         else:
             v_col, q_col, f_col, c_col = df_inv.columns[7], df_inv.columns[4], df_inv.columns[5], df_inv.columns[0]
-            s_col = df_inv.columns[1] # SUBSYSTEM COLUMN
+            s_col = df_inv.columns[1]
             life_col, used_col = df_inv.columns[8], df_inv.columns[9]
             
             k1, k2, k3, k4 = st.columns(4)
@@ -136,13 +136,11 @@ if check_password():
 
             st.divider()
 
-            # --- LIFE-AGE ANALYSIS BY SUBSYSTEM ---
+            # --- LIFE-AGE ANALYSIS ---
             st.markdown("#### ⏳ Asset Life-Age & Sustainability Analysis (by Subsystem)")
             col_age1, col_age2 = st.columns([6, 4])
-            
             with col_age1:
                 df_inv['Remaining %'] = ((df_inv[life_col] - df_inv[used_col]) / df_inv[life_col] * 100).clip(0, 100).fillna(0)
-                # Color by SUBSYSTEM now instead of category
                 fig_age = px.scatter(df_inv, x=used_col, y='Remaining %', size=v_col, color=s_col,
                                      hover_name=df_inv.columns[2], 
                                      labels={used_col: "Years in Service", 'Remaining %': "Remaining Useful Life (%)", s_col: "Subsystem"},
@@ -152,7 +150,6 @@ if check_password():
                 st.plotly_chart(fig_age, use_container_width=True)
 
             with col_age2:
-                # Grouping remaining life by subsystem
                 sub_life = df_inv.groupby(s_col)['Remaining %'].mean().reset_index()
                 fig_sub_pie = px.pie(sub_life, values='Remaining %', names=s_col, hole=0.6,
                                      title="Avg Remaining Life by Subsystem",
@@ -162,6 +159,7 @@ if check_password():
 
             st.divider()
             
+            # --- HEALTH AND VALUATION ---
             l_col, r_col = st.columns([1, 1])
             with l_col:
                 st.markdown("#### ⚡ System Health (High Visibility)")
@@ -175,17 +173,34 @@ if check_password():
 
             with r_col:
                 st.markdown("#### 💎 Asset Valuation by Subsystem")
-                # UPDATED: Changed from c_col to s_col
                 fig_pie = px.pie(df_inv, values=v_col, names=s_col, hole=0.5, color_discrete_sequence=px.colors.qualitative.Prism)
                 fig_pie.update_traces(textinfo='percent+label')
                 st.plotly_chart(fig_pie, use_container_width=True)
 
             st.divider()
-            st.markdown("#### 🎯 Root Cause Analysis (RCA) Hierarchy")
+
+            # --- PROFESSIONAL RCA BAR CHART ---
+            st.markdown("#### 🎯 Root Cause Analysis (RCA) - Technical Frequency")
             if not df_maint.empty:
-                fig_sun = px.sunburst(df_maint, path=['Category', 'Subsystem', 'Failure Cause'], color='Category', 
-                                      color_discrete_sequence=px.colors.qualitative.Pastel)
-                st.plotly_chart(fig_sun, use_container_width=True)
+                rca_counts = df_maint['Failure Cause'].value_counts().reset_index()
+                rca_counts.columns = ['Cause', 'Count']
+                total_fails = rca_counts['Count'].sum()
+                rca_counts['Percentage'] = (rca_counts['Count'] / total_fails * 100).round(1)
+
+                fig_rca = px.bar(rca_counts.sort_values('Count', ascending=True), 
+                                 x='Count', y='Cause', orientation='h',
+                                 text=rca_counts.apply(lambda x: f"{x['Count']} ({x['Percentage']}%)", axis=1),
+                                 color='Count', color_continuous_scale='Reds')
+                
+                fig_rca.update_traces(textposition='outside', cliponaxis=False)
+                fig_rca.update_layout(
+                    xaxis_title="Number of Incidents", 
+                    yaxis_title=None,
+                    height=450,
+                    coloraxis_showscale=False,
+                    margin=dict(l=20, r=100, t=20, b=20)
+                )
+                st.plotly_chart(fig_rca, use_container_width=True)
 
     elif menu == "📝 Add New Asset":
         st.subheader("📝 New Equipment Registration")
@@ -220,6 +235,7 @@ if check_password():
         if st.button("💾 Sync Database"):
             inv_ws.update([edited_df.columns.values.tolist()] + edited_df.values.tolist())
             st.success("Database synced!"); st.rerun()
+
 
 
 
