@@ -5,14 +5,11 @@ import gspread
 from google.oauth2.service_account import Credentials
 from datetime import datetime
 
-# --- 0. AUTHENTICATION SYSTEM (STABLE & SECURE) ---
+# --- 0. AUTHENTICATION SYSTEM ---
 def check_password():
-    """Returns `True` if the user had the correct password."""
     def password_entered():
-        """Checks whether a password entered by the user is correct."""
         user = st.session_state.get("username")
         pwd = st.session_state.get("password")
-        
         if user == "admin" and pwd == "aae123":
             st.session_state["password_correct"] = True
             if "password" in st.session_state: del st.session_state["password"]
@@ -28,7 +25,6 @@ def check_password():
             st.text_input("Password", type="password", key="password")
             st.button("Login", on_click=password_entered)
         return False
-    
     elif not st.session_state["password_correct"]:
         col1, col2, col3 = st.columns([1,2,1])
         with col2:
@@ -39,9 +35,7 @@ def check_password():
         return False
     return True
 
-# --- PROCEED ONLY IF AUTHENTICATED ---
 if check_password():
-    # --- 1. AAE OFFICIAL HIERARCHY ---
     AAE_STRUCTURE = {
         "Electric Power Source": ["Electric Utility", "Generator", "Solar Power System"],
         "Electric Power Distribution": ["ATS", "Main Breaker", "Distribution Panel", "Power Cable", "Transformer"],
@@ -62,7 +56,6 @@ if check_password():
         "General": ["Vandalism", "Physical Accident", "Extreme Weather", "Wear & Tear"]
     }
 
-    # --- 2. SECURE CONNECTION ---
     def init_connection():
         scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
         try:
@@ -83,7 +76,6 @@ if check_password():
 
     inv_ws, maint_ws = init_connection()
 
-    # --- 3. DATA ENGINE ---
     def load_data(worksheet):
         if not worksheet: return pd.DataFrame()
         data = worksheet.get_all_values()
@@ -95,7 +87,6 @@ if check_password():
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
         return df
 
-    # --- 4. UI STYLING & SIDEBAR ---
     st.set_page_config(page_title="AAE Executive Portal", layout="wide")
     logo_url = "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a2/Logo_of_the_Addis_Ababa%E2%80%93Adama_Expressway.png/300px-Logo_of_the_Addis_Ababa%E2%80%93Adama_Expressway.png"
     st.sidebar.image(logo_url, use_container_width=True)
@@ -128,17 +119,14 @@ if check_password():
 
     menu = st.sidebar.radio("Navigation", ["📊 Smart Dashboard", "🔎 Asset Registry", "📝 Add New Asset", "🛠️ Failure Logs"])
 
-    # --- 5. SMART DASHBOARD ---
     if menu == "📊 Smart Dashboard":
         if df_inv.empty:
             st.info("Inventory is empty. Please register assets.")
         else:
-            # Mapping columns based on typical sheet structure
             v_col, q_col, f_col, c_col = df_inv.columns[7], df_inv.columns[4], df_inv.columns[5], df_inv.columns[0]
             s_col = df_inv.columns[1] # SUBSYSTEM COLUMN
             life_col, used_col = df_inv.columns[8], df_inv.columns[9]
             
-            # Metrics
             k1, k2, k3, k4 = st.columns(4)
             k1.metric("💰 Portfolio Value", f"{df_inv[v_col].sum():,.0f} Br")
             k2.metric("📦 Active Assets", int(df_inv[q_col].sum()))
@@ -148,31 +136,32 @@ if check_password():
 
             st.divider()
 
-            # --- LIFE-AGE ANALYSIS SECTION ---
-            st.markdown("#### ⏳ Asset Life-Age & Sustainability Analysis")
+            # --- LIFE-AGE ANALYSIS BY SUBSYSTEM ---
+            st.markdown("#### ⏳ Asset Life-Age & Sustainability Analysis (by Subsystem)")
             col_age1, col_age2 = st.columns([6, 4])
             
             with col_age1:
                 df_inv['Remaining %'] = ((df_inv[life_col] - df_inv[used_col]) / df_inv[life_col] * 100).clip(0, 100).fillna(0)
-                fig_age = px.scatter(df_inv, x=used_col, y='Remaining %', size=v_col, color=c_col,
+                # Color by SUBSYSTEM now instead of category
+                fig_age = px.scatter(df_inv, x=used_col, y='Remaining %', size=v_col, color=s_col,
                                      hover_name=df_inv.columns[2], 
-                                     labels={used_col: "Years in Service", 'Remaining %': "Remaining Useful Life (%)"},
-                                     title="Asset Replacement Matrix (Size = Investment Value)")
+                                     labels={used_col: "Years in Service", 'Remaining %': "Remaining Useful Life (%)", s_col: "Subsystem"},
+                                     title="Asset Replacement Matrix")
                 fig_age.add_hline(y=20, line_dash="dot", line_color="red", annotation_text="Critical Zone")
                 fig_age.update_layout(height=400, plot_bgcolor='white')
                 st.plotly_chart(fig_age, use_container_width=True)
 
             with col_age2:
-                avg_rem = df_inv['Remaining %'].mean()
-                fig_gauge = px.pie(values=[avg_rem, 100-avg_rem], names=['Remaining', 'Consumed'], hole=0.7,
-                                   color_discrete_sequence=['#10b981', '#f1f5f9'])
-                fig_gauge.update_layout(showlegend=False, height=350, 
-                                        annotations=[dict(text=f"{avg_rem:.1f}%<br>Life<br>Remaining", x=0.5, y=0.5, font_size=18, showarrow=False)])
-                st.plotly_chart(fig_gauge, use_container_width=True)
+                # Grouping remaining life by subsystem
+                sub_life = df_inv.groupby(s_col)['Remaining %'].mean().reset_index()
+                fig_sub_pie = px.pie(sub_life, values='Remaining %', names=s_col, hole=0.6,
+                                     title="Avg Remaining Life by Subsystem",
+                                     color_discrete_sequence=px.colors.qualitative.Safe)
+                fig_sub_pie.update_layout(height=400)
+                st.plotly_chart(fig_sub_pie, use_container_width=True)
 
             st.divider()
             
-            # Health and Distribution Row
             l_col, r_col = st.columns([1, 1])
             with l_col:
                 st.markdown("#### ⚡ System Health (High Visibility)")
@@ -180,14 +169,13 @@ if check_password():
                 h_df['Health %'] = (h_df[f_col] / h_df[q_col] * 100).round(1).fillna(0)
                 fig_bar = px.bar(h_df.sort_values('Health %'), x='Health %', y=c_col, orientation='h', 
                                  text='Health %', color='Health %', color_continuous_scale='Greens', range_x=[0, 125])
-                fig_bar.update_traces(texttemplate='%{text}%', textposition='outside', 
-                                      marker_line_color='#064e3b', marker_line_width=1.5, marker_color='#10b981')
+                fig_bar.update_traces(texttemplate='%{text}%', textposition='outside', marker_line_color='#064e3b', marker_line_width=1.5)
                 fig_bar.update_layout(yaxis_title=None, xaxis_visible=False, height=400, coloraxis_showscale=False)
                 st.plotly_chart(fig_bar, use_container_width=True)
 
             with r_col:
                 st.markdown("#### 💎 Asset Valuation by Subsystem")
-                # CHANGED names FROM c_col (Category) TO s_col (Subsystem)
+                # UPDATED: Changed from c_col to s_col
                 fig_pie = px.pie(df_inv, values=v_col, names=s_col, hole=0.5, color_discrete_sequence=px.colors.qualitative.Prism)
                 fig_pie.update_traces(textinfo='percent+label')
                 st.plotly_chart(fig_pie, use_container_width=True)
@@ -199,7 +187,6 @@ if check_password():
                                       color_discrete_sequence=px.colors.qualitative.Pastel)
                 st.plotly_chart(fig_sun, use_container_width=True)
 
-    # --- 6. REGISTRATION MODULE ---
     elif menu == "📝 Add New Asset":
         st.subheader("📝 New Equipment Registration")
         c1, c2 = st.columns(2)
@@ -213,7 +200,6 @@ if check_password():
                 inv_ws.append_row([sel_cat, sel_sub, a_code, "Nos", a_qty, a_qty, a_cost, a_qty*a_cost, 10, 0, 0])
                 st.success("Registered!"); st.rerun()
 
-    # --- 7. FAILURE LOGGING MODULE ---
     elif menu == "🛠️ Failure Logs":
         st.subheader("🛠️ Technical Incident Logging")
         l1, l2 = st.columns(2)
@@ -228,13 +214,13 @@ if check_password():
                 st.success("Log recorded!"); st.rerun()
         st.dataframe(df_maint, use_container_width=True, hide_index=True)
 
-    # --- 8. REGISTRY MANAGEMENT ---
     elif menu == "🔎 Asset Registry":
         st.subheader("🔎 Master Registry (Sheet1)")
         edited_df = st.data_editor(df_inv, use_container_width=True, hide_index=True)
         if st.button("💾 Sync Database"):
             inv_ws.update([edited_df.columns.values.tolist()] + edited_df.values.tolist())
             st.success("Database synced!"); st.rerun()
+
 
 
 
