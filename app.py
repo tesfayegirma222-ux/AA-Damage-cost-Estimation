@@ -35,7 +35,7 @@ def init_connection():
 
 inv_ws = init_connection()
 
-# --- 3. DATA ENGINE ---
+# --- 3. DATA ENGINE (FIXED VALUE CALCULATION) ---
 def load_data(worksheet):
     if not worksheet: return pd.DataFrame()
     data = worksheet.get_all_values()
@@ -60,9 +60,20 @@ def load_data(worksheet):
             clean_headers.append(h)
             
     df = pd.DataFrame(data[header_idx+1:], columns=clean_headers)
+    
+    # Convert numeric columns
     for col in df.columns:
         if any(k in col.lower() for k in ['qty', 'total', 'cost', 'value', 'life', 'age', 'func', 'non']):
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+    
+    # --- AUTO-CALCULATION REPAIR ---
+    q_col = next((c for c in df.columns if 'total' in c.lower() or 'qty' in c.lower()), None)
+    u_col = next((c for c in df.columns if 'unit cost' in c.lower() or 'unitcost' in c.lower()), None)
+    v_col = next((c for c in df.columns if 'value' in c.lower()), None)
+    
+    if q_col and u_col and v_col:
+        df[v_col] = df[q_col] * df[u_col] # Forces calculation of total value
+        
     return df
 
 # --- 4. UI SETUP ---
@@ -101,7 +112,6 @@ if menu == "🔎 Inventory Operational Status":
                 u_c = next((c for c in df.columns if 'unit cost' in c.lower() or 'unitcost' in c.lower()), None)
                 v_c = next((c for c in df.columns if 'value' in c.lower()), None)
 
-                # Batch Update Logic (Simplified for stability)
                 for i, row in edited_df.iterrows():
                     sheet_row = int(display_df.index[i]) + 2
                     if q_c and f_c and n_c: row[n_c] = row[q_c] - row[f_c]
@@ -136,12 +146,12 @@ elif menu == "📝 Register New Equipment":
         
         if st.form_submit_button("✅ Add Asset"):
             total_value = qty * cost
-            # Ensure row matches your sheet column structure
+            # Adjusting row order to ensure Value is in the 8th position
             new_row = [sel_cat, sel_sub, code, unit, qty, qty, cost, total_value, life, 0, 0] 
             inv_ws.append_row(new_row)
-            st.success(f"Asset Registered! Total Value: {total_value:,.2f} ETB"); st.rerun()
+            st.success(f"Asset Registered! Total Value: {total_value:,.2f} Br"); st.rerun()
 
-# --- 7. DASHBOARD (HEALTH ANALYSIS) ---
+# --- 7. DASHBOARD ---
 elif menu == "📊 Dashboard":
     st.subheader("📊 System Health & Financial Analytics")
     if not df.empty:
@@ -152,56 +162,49 @@ elif menu == "📊 Dashboard":
         n_c = next((c for c in df.columns if 'non' in c.lower()), None)
         v_c = next((c for c in df.columns if 'value' in c.lower()), None)
 
-        if c_c and q_c and f_c:
-            # Metrics
-            m1, m2, m3, m4 = st.columns(4)
-            tot_q = df[q_c].sum()
-            bad_q = df[n_c].sum() if n_c else 0
-            tot_v = df[v_c].sum() if v_c else 0
-            
-            m1.metric("Total Assets", int(tot_q))
-            m2.metric("Operational", int(tot_q - bad_q))
-            m3.metric("Faulty", int(bad_q), delta=f"-{int(bad_q)}", delta_color="inverse")
-            m4.metric("System Value", f"{tot_v:,.2f} Br")
+        # Dashboard Metrics
+        m1, m2, m3, m4 = st.columns(4)
+        tot_q = df[q_c].sum() if q_c else 0
+        bad_q = df[n_c].sum() if n_c else 0
+        tot_v = df[v_c].sum() if v_c else 0 # THIS IS THE FIX
+        
+        m1.metric("Total Assets", int(tot_q))
+        m2.metric("Operational", int(tot_q - bad_q))
+        m3.metric("Faulty", int(bad_q), delta=f"-{int(bad_q)}", delta_color="inverse")
+        m4.metric("System Value", f"{tot_v:,.2f} Br")
 
-            st.divider()
-            
-            l, r = st.columns(2)
-            with l:
-                # 1. Sunburst for Distribution
-                st.plotly_chart(px.sunburst(df, path=[c_c, s_c], values=q_c, title="Asset Inventory Hierarchy"), use_container_width=True)
-            
-            with r:
-                # 2. HEALTH PIE CHART (Requested Change)
-                # Calculates % Health per Category for the Pie
-                health_pie_df = df.groupby(c_c).agg({q_c: 'sum', f_c: 'sum', n_c: 'sum'}).reset_index()
-                # Focus on Category Fault Rate for the Pie Chart
-                if health_pie_df[n_c].sum() > 0:
-                    fig_pie = px.pie(health_pie_df, values=n_c, names=c_c, hole=.4, 
-                                   title="Distribution of Faulty Assets by Category",
-                                   color_discrete_sequence=px.colors.sequential.OrRd_r)
-                    st.plotly_chart(fig_pie, use_container_width=True)
-                else:
-                    st.success("✅ 100% System Health: No faulty assets to display.")
+        st.divider()
+        
+        l, r = st.columns(2)
+        with l:
+            st.plotly_chart(px.sunburst(df, path=[c_c, s_c], values=q_c, title="Inventory Distribution"), use_container_width=True)
+        
+        with r:
+            # PIE CHART: Health Distribution
+            health_pie_df = df.groupby(c_c).agg({n_c: 'sum'}).reset_index()
+            if health_pie_df[n_c].sum() > 0:
+                fig_pie = px.pie(health_pie_df, values=n_c, names=c_c, hole=.4, 
+                               title="Faulty Assets by Category",
+                               color_discrete_sequence=px.colors.sequential.OrRd_r)
+                st.plotly_chart(fig_pie, use_container_width=True)
+            else:
+                st.success("✅ 100% Operational Health")
 
-            st.divider()
-            
-            # 3. Horizontal Health Bar
-            st.markdown("### 🛠️ Operational Health Score (% Functional)")
-            health_df = df.groupby(c_c).agg({q_c: 'sum', f_c: 'sum'}).reset_index()
-            health_df['Health'] = (health_df[f_c] / health_df[q_c] * 100).round(1)
-            health_df = health_df.sort_values(by='Health', ascending=True)
-            
-            fig_h = px.bar(
-                health_df, x='Health', y=c_c, orientation='h', 
-                title="System Health Score by Category",
-                text=health_df['Health'].apply(lambda x: f'{x}%'),
-                color='Health', color_continuous_scale='RdYlGn', range_color=[0, 100]
-            )
-            fig_h.update_traces(textposition='outside')
-            st.plotly_chart(fig_h, use_container_width=True)
-        else:
-            st.error("Dashboard Column Error: Required headers not found.")
+        st.divider()
+        
+        # Horizontal Health Bar
+        st.markdown("### 🛠️ Operational Health Score (%)")
+        health_df = df.groupby(c_c).agg({q_c: 'sum', f_c: 'sum'}).reset_index()
+        health_df['Health'] = (health_df[f_c] / health_df[q_c] * 100).round(1)
+        health_df = health_df.sort_values(by='Health', ascending=True)
+        
+        fig_h = px.bar(
+            health_df, x='Health', y=c_c, orientation='h', 
+            text=health_df['Health'].apply(lambda x: f'{x}%'),
+            color='Health', color_continuous_scale='RdYlGn', range_color=[0, 100]
+        )
+        st.plotly_chart(fig_h, use_container_width=True)
+
 
 
 
