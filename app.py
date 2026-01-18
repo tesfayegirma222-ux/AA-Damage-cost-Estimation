@@ -31,10 +31,7 @@ def init_connection():
         client = gspread.authorize(creds)
         sh = client.open_by_url(st.secrets["SHEET_URL"])
         
-        # Get Inventory Sheet
         inv = next((s for s in sh.worksheets() if "inventory" in s.title.lower()), sh.get_worksheet(0))
-        
-        # Get or Create Maintenance Sheet
         try:
             maint = sh.worksheet("Maintenance_Log")
         except:
@@ -55,7 +52,6 @@ def load_data(worksheet):
     if len(data) < 2: return pd.DataFrame()
     df = pd.DataFrame(data[1:], columns=data[0])
     
-    # Numeric conversion for Inventory
     for col in df.columns:
         if any(k in col.lower() for k in ['qty', 'total', 'cost', 'value', 'life', 'age', 'func', 'non']):
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
@@ -69,13 +65,13 @@ df_maint = load_data(maint_ws)
 st.markdown("""
     <div style="background: #1E3A8A; color: white; padding: 15px; border-radius: 10px; text-align: center; margin-bottom: 20px;">
         <h2 style="margin:0;">Addis Ababa-Adama Expressway</h2>
-        <p style="margin:0;">Electromechanical Master Database & Maintenance Log</p>
+        <p style="margin:0;">Electromechanical Master Database & RCA Analytics</p>
     </div>
 """, unsafe_allow_html=True)
 
 menu = st.sidebar.radio("Navigation", ["🔎 Inventory Status", "📝 Register New Equipment", "🛠️ Maintenance History", "📊 Dashboard"])
 
-# --- 5. MODULE: INVENTORY (Shortened for brevity, remains same as previous) ---
+# --- 5. MODULE: INVENTORY ---
 if menu == "🔎 Inventory Status":
     st.subheader("🔎 Master Registry")
     if df_inv.empty: st.warning("Database empty.")
@@ -96,71 +92,78 @@ elif menu == "📝 Register New Equipment":
         qty = st.number_input("Quantity", min_value=1)
         cost = st.number_input("Unit Cost (ETB)", min_value=0.0)
         if st.form_submit_button("Add Asset"):
+            # Columns: Category, Subsystem, Code, Unit, Total Qty, Functional, Unit Cost, Total Value, Life, Age, Non-Func
             inv_ws.append_row([cat, sub, code, "Nos", qty, qty, cost, qty*cost, 10, 0, 0])
             st.success("Registered!"); st.rerun()
 
-# --- 7. MODULE: MAINTENANCE HISTORY (NEW) ---
+# --- 7. MODULE: MAINTENANCE HISTORY ---
 elif menu == "🛠️ Maintenance History":
     st.subheader("🛠️ Failure Reporting & Logs")
-    
     with st.expander("➕ Log New Equipment Failure", expanded=True):
         with st.form("maint_form"):
             col1, col2, col3 = st.columns(3)
-            m_cat = col1.selectbox("Category", list(AAE_STRUCTURE.keys()), key="m_cat")
-            m_sub = col2.selectbox("Subsystem", AAE_STRUCTURE[m_cat], key="m_sub")
-            m_code = col3.text_input("Asset Code (e.g. AAE-CCTV-001)")
-            
+            m_cat = col1.selectbox("Category", list(AAE_STRUCTURE.keys()))
+            m_sub = col2.selectbox("Subsystem", AAE_STRUCTURE[m_cat])
+            m_code = col3.text_input("Asset Code")
             col4, col5 = st.columns(2)
             m_cause = col4.selectbox("Root Cause of Failure", FAIL_CAUSES)
-            m_tech = col5.text_input("Reported By / Technician")
-            
+            m_tech = col5.text_input("Technician Name")
             if st.form_submit_button("🚨 Submit Failure Report"):
                 new_entry = [datetime.now().strftime("%Y-%m-%d"), m_cat, m_sub, m_code, m_cause, m_tech, "Pending"]
                 maint_ws.append_row(new_entry)
-                st.success("Failure logged in history!"); st.rerun()
-    
-    st.divider()
-    st.write("### Recent Maintenance Logs")
+                st.success("Failure logged!"); st.rerun()
     st.dataframe(df_maint, use_container_width=True)
 
-# --- 8. DASHBOARD (UPDATED WITH RCA) ---
+# --- 8. DASHBOARD (INVENTORY + RCA + SYSTEM HEALTH) ---
 elif menu == "📊 Dashboard":
     st.subheader("📊 System Health & Root Cause Analysis")
     
     if not df_inv.empty:
-        # Inventory Metrics
-        v_c = next((c for c in df_inv.columns if 'value' in c.lower()), None)
-        tot_v = df_inv[v_c].sum() if v_c else 0
-        st.metric("Total System Value", f"{tot_v:,.2f} Br")
-        
+        # Columns identification
+        c_col = df_inv.columns[0]
+        q_col = next((c for c in df_inv.columns if 'qty' in c.lower() or 'total' in c.lower()), None)
+        f_col = next((c for c in df_inv.columns if 'func' in c.lower()), None)
+        v_col = next((c for c in df_inv.columns if 'value' in c.lower()), None)
+
+        # Metrics Row
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Total System Value", f"{df_inv[v_col].sum():,.2f} Br")
+        m2.metric("Total Assets", int(df_inv[q_col].sum()))
+        m3.metric("Overall Health", f"{(df_inv[f_col].sum()/df_inv[q_col].sum()*100):.1f}%")
+
         st.divider()
         
-        row1_col1, row1_col2 = st.columns(2)
+        # Row 1: Health Bar and RCA Pie
+        col_left, col_right = st.columns(2)
         
-        with row1_col1:
-            # 1. Financial Distribution
-            st.plotly_chart(px.pie(df_inv, values=v_c, names=df_inv.columns[0], hole=.4, title="Asset Value by Category"), use_container_width=True)
-        
-        with row1_col2:
-            # 2. ROOT CAUSE ANALYSIS (The requested feature)
+        with col_left:
+            st.markdown("#### 🛠️ System Health by Category (%)")
+            h_df = df_inv.groupby(c_col).agg({q_col: 'sum', f_col: 'sum'}).reset_index()
+            h_df['Health %'] = (h_df[f_col] / h_df[q_col] * 100).round(1)
+            h_df = h_df.sort_values(by='Health %')
+            
+            fig_health = px.bar(h_df, x='Health %', y=c_col, orientation='h',
+                               text=h_df['Health %'].apply(lambda x: f'{x}%'),
+                               color='Health %', color_continuous_scale='RdYlGn', range_color=[0, 100])
+            st.plotly_chart(fig_health, use_container_width=True)
+
+        with col_right:
             st.markdown("#### 🔍 Root Cause Analysis (%)")
             if not df_maint.empty:
                 rca_counts = df_maint['Failure Cause'].value_counts().reset_index()
                 rca_counts.columns = ['Cause', 'Count']
-                fig_rca = px.pie(rca_counts, values='Count', names='Cause', 
-                                title="Primary Reasons for Failure",
+                fig_rca = px.pie(rca_counts, values='Count', names='Cause', hole=0.4,
                                 color_discrete_sequence=px.colors.sequential.Reds_r)
                 st.plotly_chart(fig_rca, use_container_width=True)
             else:
-                st.info("No failure data available yet for RCA.")
+                st.info("Log failures in 'Maintenance History' to see RCA data.")
 
         st.divider()
         
-        # 3. FAILURE HEATMAP BY CATEGORY
-        if not df_maint.empty:
-            st.markdown("#### 📈 Failure Frequency by System & Subsystem")
-            fig_tree = px.treemap(df_maint, path=['Category', 'Subsystem', 'Failure Cause'], title="Maintenance Incident Mapping")
-            st.plotly_chart(fig_tree, use_container_width=True)
+        # Row 2: Treemap Distribution
+        st.markdown("#### 🗺️ Asset Inventory Mapping")
+        st.plotly_chart(px.treemap(df_inv, path=[c_col, df_inv.columns[1]], values=q_col), use_container_width=True)
+
 
 
 
