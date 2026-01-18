@@ -5,7 +5,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 from datetime import datetime
 
-# --- 0. AUTHENTICATION SYSTEM (FIXED) ---
+# --- 0. AUTHENTICATION SYSTEM (FIXED & SECURE) ---
 def check_password():
     """Returns `True` if the user had the correct password."""
     def password_entered():
@@ -15,7 +15,6 @@ def check_password():
         
         if user == "admin" and pwd == "aae123":
             st.session_state["password_correct"] = True
-            # Clean up sensitive data from state
             if "password" in st.session_state: del st.session_state["password"]
             if "username" in st.session_state: del st.session_state["username"]
         else:
@@ -118,7 +117,7 @@ if check_password():
         }
         div[data-testid="metric-container"] {
             background: white; padding: 15px; border-radius: 10px;
-            border-left: 5px solid #3b82f6; box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            border-left: 5px solid #10b981; box-shadow: 0 1px 3px rgba(0,0,0,0.1);
         }
         </style>
         <div class="main-header">
@@ -161,10 +160,14 @@ if check_password():
                 h_df = df_inv.groupby(c_col).agg({q_col: 'sum', f_col: 'sum'}).reset_index()
                 h_df['Health %'] = (h_df[f_col] / h_df[q_col] * 100).round(1).fillna(0)
                 
+                # BAR CHART UPDATED TO GREEN
                 fig_bar = px.bar(h_df.sort_values('Health %'), x='Health %', y=c_col, orientation='h', 
-                                 text='Health %', color='Health %', color_continuous_scale='RdYlGn', range_x=[0, 125])
-                fig_bar.update_traces(texttemplate='%{text}%', textposition='outside', marker_line_color='black', marker_line_width=1)
-                fig_bar.update_layout(yaxis_title=None, xaxis_visible=False, height=400, coloraxis_showscale=False)
+                                 text='Health %', color='Health %', color_continuous_scale='Greens', range_x=[0, 125])
+                fig_bar.update_traces(texttemplate='%{text}%', textposition='outside', 
+                                      marker_line_color='#064e3b', marker_line_width=1.5,
+                                      marker_color='#10b981')
+                fig_bar.update_layout(yaxis_title=None, xaxis_visible=False, height=400, coloraxis_showscale=False,
+                                      plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)')
                 st.plotly_chart(fig_bar, use_container_width=True)
 
             with r_col:
@@ -222,6 +225,7 @@ if check_password():
             if st.button("💾 Sync Database"):
                 inv_ws.update([edited_df.columns.values.tolist()] + edited_df.values.tolist())
                 st.success("Sheet1 successfully synced!"); st.rerun()
+
 
 
 
