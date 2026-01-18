@@ -136,7 +136,7 @@ if check_password():
 
             st.divider()
 
-            # --- LIFE-AGE ANALYSIS ---
+            # --- LIFE-AGE ANALYSIS (BY SUBSYSTEM) ---
             st.markdown("#### ⏳ Asset Life-Age & Sustainability Analysis (by Subsystem)")
             col_age1, col_age2 = st.columns([6, 4])
             with col_age1:
@@ -159,7 +159,6 @@ if check_password():
 
             st.divider()
             
-            # --- HEALTH AND VALUATION ---
             l_col, r_col = st.columns([1, 1])
             with l_col:
                 st.markdown("#### ⚡ System Health (High Visibility)")
@@ -179,16 +178,17 @@ if check_password():
 
             st.divider()
 
-            # --- PROFESSIONAL RCA BAR CHART ---
-            st.markdown("#### 🎯 Root Cause Analysis (RCA) - Technical Frequency")
+            # --- UPDATED: PROFESSIONAL RCA BAR CHART BY CATEGORY ---
+            st.markdown("#### 🎯 Root Cause Analysis (RCA) - Frequency by Category")
             if not df_maint.empty:
-                rca_counts = df_maint['Failure Cause'].value_counts().reset_index()
-                rca_counts.columns = ['Cause', 'Count']
+                # Grouping by 'Category' as requested
+                rca_counts = df_maint['Category'].value_counts().reset_index()
+                rca_counts.columns = ['Category', 'Count']
                 total_fails = rca_counts['Count'].sum()
                 rca_counts['Percentage'] = (rca_counts['Count'] / total_fails * 100).round(1)
 
                 fig_rca = px.bar(rca_counts.sort_values('Count', ascending=True), 
-                                 x='Count', y='Cause', orientation='h',
+                                 x='Count', y='Category', orientation='h',
                                  text=rca_counts.apply(lambda x: f"{x['Count']} ({x['Percentage']}%)", axis=1),
                                  color='Count', color_continuous_scale='Reds')
                 
@@ -235,6 +235,7 @@ if check_password():
         if st.button("💾 Sync Database"):
             inv_ws.update([edited_df.columns.values.tolist()] + edited_df.values.tolist())
             st.success("Database synced!"); st.rerun()
+
 
 
 
