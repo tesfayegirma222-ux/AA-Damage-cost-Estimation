@@ -34,7 +34,7 @@ RCA_STANDARDS = {
     "General": ["Vandalism", "Physical Accident", "Extreme Weather", "Wear & Tear"]
 }
 
-# --- 3. SECURE CONNECTION ---
+# --- 3. CONNECTION ---
 def init_connection():
     scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     try:
@@ -42,12 +42,7 @@ def init_connection():
         creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
         client = gspread.authorize(creds)
         sh = client.open_by_url(st.secrets["SHEET_URL"])
-        
-        try:
-            inv = sh.worksheet("Sheet1")
-        except:
-            inv = sh.get_worksheet(0)
-            
+        inv = sh.worksheet("Sheet1")
         try:
             maint = sh.worksheet("Maintenance_Log")
         except:
@@ -72,10 +67,8 @@ def load_data(worksheet):
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
     return df
 
-# --- 5. PROFESSIONAL UI STYLING & NAVIGATION LOGO ---
+# --- 5. UI STYLING ---
 st.set_page_config(page_title="AAE Executive Portal", layout="wide")
-
-# Sidebar Logo
 logo_url = "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a2/Logo_of_the_Addis_Ababa%E2%80%93Adama_Expressway.png/300px-Logo_of_the_Addis_Ababa%E2%80%93Adama_Expressway.png"
 st.sidebar.image(logo_url, use_container_width=True)
 
@@ -87,7 +80,6 @@ st.markdown("""
         color: white; padding: 1.5rem; border-radius: 12px;
         text-align: center; margin-bottom: 2rem; box-shadow: 0 4px 6px rgba(0,0,0,0.1);
     }
-    div[data-testid="stMetricValue"] { font-size: 28px !important; font-weight: 700 !important; color: #1e3a8a !important; }
     div[data-testid="metric-container"] {
         background: white; padding: 15px; border-radius: 10px;
         border-left: 5px solid #3b82f6; box-shadow: 0 1px 3px rgba(0,0,0,0.1);
@@ -95,7 +87,7 @@ st.markdown("""
     </style>
     <div class="main-header">
         <h1 style="margin:0; font-size: 24px;">AAE ELECTROMECHANICAL EXECUTIVE PORTAL</h1>
-        <p style="margin:0; opacity: 0.9;">System Integrity & Asset Management Control</p>
+        <p style="margin:0; opacity: 0.9;">System Integrity & Root Cause Analysis Dashboard</p>
     </div>
 """, unsafe_allow_html=True)
 
@@ -104,68 +96,72 @@ df_maint = load_data(maint_ws)
 
 menu = st.sidebar.radio("Navigation", ["📊 Smart Dashboard", "🔎 Asset Registry", "📝 Add New Asset", "🛠️ Failure Logs"])
 
-# --- 6. SMART DASHBOARD ---
+# --- 6. SMART DASHBOARD (WITH RCA BY CATEGORY) ---
 if menu == "📊 Smart Dashboard":
     if df_inv.empty:
-        st.info("Inventory Empty. Use 'Add New Asset' to begin.")
+        st.info("Inventory Empty. Please add assets.")
     else:
-        v_col = df_inv.columns[7]
-        q_col = next((c for c in df_inv.columns if 'qty' in c.lower()), df_inv.columns[4])
-        f_col = next((c for c in df_inv.columns if 'func' in c.lower()), df_inv.columns[5])
-        c_col = df_inv.columns[0]
+        v_col, q_col, f_col, c_col = df_inv.columns[7], df_inv.columns[4], df_inv.columns[5], df_inv.columns[0]
         
+        # Metrics
         k1, k2, k3, k4 = st.columns(4)
-        val_sum = float(df_inv[v_col].sum())
-        qty_sum = float(df_inv[q_col].sum())
-        health = (df_inv[f_col].sum() / qty_sum * 100) if qty_sum > 0 else 0
-        incidents = len(df_maint) if not df_maint.empty else 0
-        
-        k1.metric("💰 Portfolio Value", f"{val_sum:,.0f} Br")
-        k2.metric("📦 Active Assets", f"{int(qty_sum)}")
+        k1.metric("💰 Portfolio Value", f"{df_inv[v_col].sum():,.0f} Br")
+        k2.metric("📦 Assets Count", int(df_inv[q_col].sum()))
+        health = (df_inv[f_col].sum() / df_inv[q_col].sum() * 100) if df_inv[q_col].sum() > 0 else 0
         k3.metric("🏥 Health Index", f"{health:.1f}%")
-        k4.metric("🚨 Total Incidents", incidents)
+        k4.metric("🚨 Failures Logged", len(df_maint) if not df_maint.empty else 0)
 
         st.divider()
-        col_left, col_right = st.columns([4, 6])
         
-        with col_left:
-            st.markdown("#### 💎 Investment Distribution")
-            fig_pie = px.pie(df_inv, values=v_col, names=c_col, hole=0.6, template="plotly_white")
-            fig_pie.update_layout(showlegend=False, margin=dict(t=0, b=0, l=0, r=0))
-            st.plotly_chart(fig_pie, use_container_width=True)
-
-        with col_right:
-            st.markdown("#### ⚡ System Health Score")
+        # Visuals Row 1
+        c_left, c_right = st.columns([1, 1])
+        with c_left:
+            st.markdown("#### ⚡ Operational Health (High-Vis)")
             h_df = df_inv.groupby(c_col).agg({q_col: 'sum', f_col: 'sum'}).reset_index()
             h_df['Health %'] = (h_df[f_col] / h_df[q_col] * 100).round(1).fillna(0)
             
+            # IMPROVED BAR VISUALITY
             fig_bar = px.bar(h_df.sort_values('Health %'), x='Health %', y=c_col, orientation='h', 
                              text='Health %', color='Health %', 
-                             color_continuous_scale='RdYlGn', range_x=[0, 120])
+                             color_continuous_scale='RdYlGn', range_x=[0, 125])
             fig_bar.update_traces(texttemplate='%{text}%', textposition='outside', 
-                                  marker_line_color='rgb(30, 58, 138)', marker_line_width=1.5)
-            fig_bar.update_layout(yaxis_title=None, xaxis_visible=False, height=350, 
-                                  margin=dict(t=20, b=20), coloraxis_showscale=False,
-                                  plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)')
+                                  marker_line_color='black', marker_line_width=1)
+            fig_bar.update_layout(yaxis_title=None, xaxis_visible=False, height=400, coloraxis_showscale=False)
             st.plotly_chart(fig_bar, use_container_width=True)
 
-# --- 7. DYNAMIC ADD ASSET ---
+        with c_right:
+            st.markdown("#### 💎 Asset Value Distribution")
+            fig_pie = px.pie(df_inv, values=v_col, names=c_col, hole=0.5, color_discrete_sequence=px.colors.qualitative.Prism)
+            fig_pie.update_layout(height=400, showlegend=True)
+            st.plotly_chart(fig_pie, use_container_width=True)
+
+        st.divider()
+
+        # Visuals Row 2: RCA BY CATEGORY
+        st.markdown("#### 🎯 RCA (Root Cause Analysis) by Category Hierarchy")
+        if not df_maint.empty:
+            # SUNBURST CHART FOR RCA
+            fig_sun = px.sunburst(df_maint, path=['Category', 'Subsystem', 'Failure Cause'], 
+                                 color='Category', color_discrete_sequence=px.colors.qualitative.Pastel)
+            fig_sun.update_layout(height=550, margin=dict(t=10, b=10, l=10, r=10))
+            st.plotly_chart(fig_sun, use_container_width=True)
+        else:
+            st.info("No failure data available to display RCA Hierarchy. Log failures in 'Failure Logs' menu.")
+
+# --- RETAINED REGISTRY & LOGGING MODULES (AS PER PREVIOUS VERSION) ---
 elif menu == "📝 Add New Asset":
     st.subheader("📝 New Equipment Registration")
     c1, c2 = st.columns(2)
     sel_cat = c1.selectbox("Major Category", list(AAE_STRUCTURE.keys()))
     sel_sub = c2.selectbox("Subsystem", AAE_STRUCTURE.get(sel_cat, []))
     with st.form("reg_form", clear_on_submit=True):
-        f1, f2, f3 = st.columns(3)
-        a_code = f1.text_input("Asset Code")
-        a_qty = f2.number_input("Quantity", min_value=1)
-        a_cost = f3.number_input("Unit Cost (Br)", min_value=0.0)
-        if st.form_submit_button("🚀 Commit to Sheet1"):
-            if a_code:
-                inv_ws.append_row([sel_cat, sel_sub, a_code, "Nos", a_qty, a_qty, a_cost, a_qty*a_cost, 10, 0, 0])
-                st.success(f"Asset {a_code} Registered!"); st.rerun()
+        a_code = st.text_input("Asset Code")
+        a_qty = st.number_input("Quantity", min_value=1)
+        a_cost = st.number_input("Unit Cost", min_value=0.0)
+        if st.form_submit_button("🚀 Register Asset"):
+            inv_ws.append_row([sel_cat, sel_sub, a_code, "Nos", a_qty, a_qty, a_cost, a_qty*a_cost, 10, 0, 0])
+            st.success("Success!"); st.rerun()
 
-# --- 8. DYNAMIC FAILURE LOGS ---
 elif menu == "🛠️ Failure Logs":
     st.subheader("🛠️ Technical Incident Logging")
     l1, l2 = st.columns(2)
@@ -176,20 +172,17 @@ elif menu == "🛠️ Failure Logs":
         m_code = st.text_input("Asset Code")
         m_tech = st.text_input("Technician")
         if st.form_submit_button("⚠️ Log Failure"):
-            if m_code and m_tech:
-                maint_ws.append_row([datetime.now().strftime("%Y-%m-%d"), m_cat, m_sub, m_code, m_cause, m_tech])
-                st.success("Incident Logged!"); st.rerun()
-    st.divider()
-    if not df_maint.empty:
-        st.dataframe(df_maint.sort_values(by=df_maint.columns[0], ascending=False), use_container_width=True, hide_index=True)
+            maint_ws.append_row([datetime.now().strftime("%Y-%m-%d"), m_cat, m_sub, m_code, m_cause, m_tech])
+            st.success("Logged!"); st.rerun()
+    st.dataframe(df_maint, use_container_width=True)
 
 elif menu == "🔎 Asset Registry":
     st.subheader("🔎 Master Registry (Sheet1)")
-    if not df_inv.empty:
-        edited_df = st.data_editor(df_inv, use_container_width=True, hide_index=True)
-        if st.button("💾 Sync Sheet1"):
-            inv_ws.update([edited_df.columns.values.tolist()] + edited_df.values.tolist())
-            st.success("Data Synced!"); st.rerun()
+    edited_df = st.data_editor(df_inv, use_container_width=True, hide_index=True)
+    if st.button("💾 Sync Sheet1"):
+        inv_ws.update([edited_df.columns.values.tolist()] + edited_df.values.tolist())
+        st.success("Synced!"); st.rerun()
+
 
 
 
