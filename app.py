@@ -45,12 +45,15 @@ def init_connection():
 
 inv_ws, maint_ws = init_connection()
 
-# --- 3. DATA ENGINE ---
+# --- 3. DATA ENGINE (ROBUST COLUMN HANDLING) ---
 def load_data(worksheet):
     if not worksheet: return pd.DataFrame()
     data = worksheet.get_all_values()
     if len(data) < 2: return pd.DataFrame()
-    df = pd.DataFrame(data[1:], columns=data[0])
+    
+    # Strip whitespace from headers to prevent KeyErrors
+    headers = [str(h).strip() for h in data[0]]
+    df = pd.DataFrame(data[1:], columns=headers)
     
     for col in df.columns:
         if any(k in col.lower() for k in ['qty', 'total', 'cost', 'value', 'life', 'age', 'func', 'non']):
@@ -65,7 +68,7 @@ df_maint = load_data(maint_ws)
 st.markdown("""
     <div style="background: #1E3A8A; color: white; padding: 15px; border-radius: 10px; text-align: center; margin-bottom: 20px;">
         <h2 style="margin:0;">Addis Ababa-Adama Expressway</h2>
-        <p style="margin:0;">Electromechanical Master Database & RCA Analytics</p>
+        <p style="margin:0;">Electromechanical Master Database & Maintenance Log</p>
     </div>
 """, unsafe_allow_html=True)
 
@@ -92,7 +95,7 @@ elif menu == "📝 Register New Equipment":
         qty = st.number_input("Quantity", min_value=1)
         cost = st.number_input("Unit Cost (ETB)", min_value=0.0)
         if st.form_submit_button("Add Asset"):
-            # Columns: Category, Subsystem, Code, Unit, Total Qty, Functional, Unit Cost, Total Value, Life, Age, Non-Func
+            # Ensure order: Category, Subsystem, Code, Unit, Total Qty, Functional, Unit Cost, Total Value, Life, Age, Non-Func
             inv_ws.append_row([cat, sub, code, "Nos", qty, qty, cost, qty*cost, 10, 0, 0])
             st.success("Registered!"); st.rerun()
 
@@ -114,22 +117,36 @@ elif menu == "🛠️ Maintenance History":
                 st.success("Failure logged!"); st.rerun()
     st.dataframe(df_maint, use_container_width=True)
 
-# --- 8. DASHBOARD (INVENTORY + RCA + SYSTEM HEALTH) ---
+# --- 8. DASHBOARD (FIXED KEYERROR PROTECTIONS) ---
 elif menu == "📊 Dashboard":
     st.subheader("📊 System Health & Root Cause Analysis")
     
     if not df_inv.empty:
-        # Columns identification
-        c_col = df_inv.columns[0]
-        q_col = next((c for c in df_inv.columns if 'qty' in c.lower() or 'total' in c.lower()), None)
-        f_col = next((c for c in df_inv.columns if 'func' in c.lower()), None)
-        v_col = next((c for c in df_inv.columns if 'value' in c.lower()), None)
+        # --- SAFE COLUMN FINDER ---
+        # We search for columns using lowercase keywords to avoid NameErrors
+        cols = df_inv.columns
+        c_col = cols[0] # Default to first column for Category
+        q_col = next((c for c in cols if 'qty' in c.lower() or 'total' in c.lower()), None)
+        f_col = next((c for c in cols if 'func' in c.lower()), None)
+        v_col = next((c for c in cols if 'value' in c.lower()), None)
 
-        # Metrics Row
+        # Metrics Row with Key Check
         m1, m2, m3 = st.columns(3)
-        m1.metric("Total System Value", f"{df_inv[v_col].sum():,.2f} Br")
-        m2.metric("Total Assets", int(df_inv[q_col].sum()))
-        m3.metric("Overall Health", f"{(df_inv[f_col].sum()/df_inv[q_col].sum()*100):.1f}%")
+        
+        # Total Value Calculation with Fallback
+        val_display = f"{df_inv[v_col].sum():,.2f} Br" if v_col else "Column Missing"
+        m1.metric("Total System Value", val_display)
+        
+        # Quantity Metric
+        qty_display = int(df_inv[q_col].sum()) if q_col else 0
+        m2.metric("Total Assets", qty_display)
+        
+        # Health Metric
+        if q_col and f_col and df_inv[q_col].sum() > 0:
+            health_pct = (df_inv[f_col].sum() / df_inv[q_col].sum()) * 100
+            m3.metric("Overall Health", f"{health_pct:.1f}%")
+        else:
+            m3.metric("Overall Health", "N/A")
 
         st.divider()
         
@@ -138,31 +155,29 @@ elif menu == "📊 Dashboard":
         
         with col_left:
             st.markdown("#### 🛠️ System Health by Category (%)")
-            h_df = df_inv.groupby(c_col).agg({q_col: 'sum', f_col: 'sum'}).reset_index()
-            h_df['Health %'] = (h_df[f_col] / h_df[q_col] * 100).round(1)
-            h_df = h_df.sort_values(by='Health %')
-            
-            fig_health = px.bar(h_df, x='Health %', y=c_col, orientation='h',
-                               text=h_df['Health %'].apply(lambda x: f'{x}%'),
-                               color='Health %', color_continuous_scale='RdYlGn', range_color=[0, 100])
-            st.plotly_chart(fig_health, use_container_width=True)
+            if q_col and f_col:
+                h_df = df_inv.groupby(c_col).agg({q_col: 'sum', f_col: 'sum'}).reset_index()
+                h_df['Health %'] = (h_df[f_col] / h_df[q_col] * 100).round(1)
+                h_df = h_df.sort_values(by='Health %')
+                
+                fig_health = px.bar(h_df, x='Health %', y=c_col, orientation='h',
+                                   text=h_df['Health %'].apply(lambda x: f'{x}%'),
+                                   color='Health %', color_continuous_scale='RdYlGn', range_color=[0, 100])
+                st.plotly_chart(fig_health, use_container_width=True)
+            else:
+                st.error("Cannot generate Health Chart: 'Qty' or 'Functional' columns not found.")
 
         with col_right:
             st.markdown("#### 🔍 Root Cause Analysis (%)")
-            if not df_maint.empty:
+            if not df_maint.empty and 'Failure Cause' in df_maint.columns:
                 rca_counts = df_maint['Failure Cause'].value_counts().reset_index()
                 rca_counts.columns = ['Cause', 'Count']
                 fig_rca = px.pie(rca_counts, values='Count', names='Cause', hole=0.4,
                                 color_discrete_sequence=px.colors.sequential.Reds_r)
                 st.plotly_chart(fig_rca, use_container_width=True)
             else:
-                st.info("Log failures in 'Maintenance History' to see RCA data.")
+                st.info("No failure data available yet. Please log failures in 'Maintenance History'.")
 
-        st.divider()
-        
-        # Row 2: Treemap Distribution
-        st.markdown("#### 🗺️ Asset Inventory Mapping")
-        st.plotly_chart(px.treemap(df_inv, path=[c_col, df_inv.columns[1]], values=q_col), use_container_width=True)
 
 
 
