@@ -137,7 +137,7 @@ if check_password():
             st.divider()
 
             # --- LIFE-AGE ANALYSIS ---
-            st.markdown("#### ⏳ Asset Life-Age & Sustainability Analysis (by Subsystem)")
+            st.markdown("#### ⏳ Asset Life-Age & Sustainability Analysis")
             col_age1, col_age2 = st.columns([6, 4])
             with col_age1:
                 df_inv['Remaining %'] = ((df_inv[life_col] - df_inv[used_col]) / df_inv[life_col] * 100).clip(0, 100).fillna(0)
@@ -241,6 +241,7 @@ if check_password():
         if st.button("💾 Sync Database"):
             inv_ws.update([edited_df.columns.values.tolist()] + edited_df.values.tolist())
             st.success("Database synced!"); st.rerun()
+
 
 
 
