@@ -46,25 +46,18 @@ def init_connection():
 
 inv_ws, maint_ws = init_connection()
 
-# --- 3. DATA ENGINE (SPECIFIC COLUMN 8 TARGETING) ---
+# --- 3. DATA ENGINE ---
 def load_data(worksheet):
     if not worksheet: return pd.DataFrame()
     data = worksheet.get_all_values()
     if len(data) < 2: return pd.DataFrame()
-    
     headers = [str(h).strip() for h in data[0]]
     df = pd.DataFrame(data[1:], columns=headers)
     
-    # Force Column 8 (index 7) to be numeric for Total Cost
-    if len(df.columns) >= 8:
-        val_col_name = df.columns[7] # 0-based index 7 is Column 8
-        df[val_col_name] = pd.to_numeric(df[val_col_name], errors='coerce').fillna(0)
-    
-    # Convert other numeric columns (Qty, Functional etc)
-    for col in df.columns:
-        if any(k in col.lower() for k in ['qty', 'total', 'cost', 'func']):
+    # Process numeric columns (Targeting Column 8/Index 7 for Value)
+    for i, col in enumerate(df.columns):
+        if any(k in col.lower() for k in ['qty', 'total', 'cost', 'value', 'func']) or i == 7:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-            
     return df
 
 # --- 4. UI SETUP ---
@@ -75,73 +68,88 @@ df_maint = load_data(maint_ws)
 st.markdown("""
     <div style="background: #1E3A8A; color: white; padding: 15px; border-radius: 10px; text-align: center; margin-bottom: 20px;">
         <h2 style="margin:0;">Addis Ababa-Adama Expressway</h2>
-        <p style="margin:0;">Electromechanical Asset Management System</p>
+        <p style="margin:0;">Electromechanical Master Database (Live Status)</p>
     </div>
 """, unsafe_allow_html=True)
 
 menu = st.sidebar.radio("Navigation", ["📊 Dashboard", "🔎 Inventory Status", "📝 Register New Equipment", "🛠️ Maintenance History"])
 
-# --- 5. DASHBOARD (SUMMING COLUMN 8) ---
+# --- 5. DASHBOARD MODULE ---
 if menu == "📊 Dashboard":
     st.subheader("📊 System Health & Financial Analytics")
-    
     if not df_inv.empty:
-        # Define columns based on position
-        val_col = df_inv.columns[7] if len(df_inv.columns) >= 8 else None
+        # Identify columns by index/name
+        v_col = df_inv.columns[7] if len(df_inv.columns) >= 8 else None
         q_col = next((c for c in df_inv.columns if 'qty' in c.lower()), df_inv.columns[4])
         f_col = next((c for c in df_inv.columns if 'func' in c.lower()), df_inv.columns[5])
+        c_col = df_inv.columns[0]
         
-        # --- TOP LEVEL METRICS ---
+        # Metrics
         m1, m2, m3 = st.columns(3)
+        total_val = df_inv[v_col].sum() if v_col else 0
+        m1.metric("Total Asset Value", f"{total_val:,.2f} Br")
+        m2.metric("Total Assets (Qty)", int(df_inv[q_col].sum()))
         
-        # SUMMING COLUMN 8
-        total_value_sum = df_inv[val_col].sum() if val_col else 0
-        m1.metric("Total Asset Value", f"{total_value_sum:,.2f} Br")
-        
-        total_qty = df_inv[q_col].sum()
-        m2.metric("Total Assets (Qty)", int(total_qty))
-        
-        health_score = (df_inv[f_col].sum() / total_qty * 100) if total_qty > 0 else 0
-        m3.metric("Overall System Health", f"{health_score:.1f}%")
+        health_overall = (df_inv[f_col].sum() / df_inv[q_col].sum() * 100) if df_inv[q_col].sum() > 0 else 0
+        m3.metric("Overall System Health", f"{health_overall:.1f}%")
 
         st.divider()
-
-        # --- CHARTS ---
         l, r = st.columns(2)
         with l:
-            st.markdown("#### 💰 Financial Value by Category (Col 8)")
-            fig_pie = px.pie(df_inv, values=val_col, names=df_inv.columns[0], hole=0.4,
-                            color_discrete_sequence=px.colors.qualitative.Pastel)
-            st.plotly_chart(fig_pie, use_container_width=True)
+            st.markdown("#### 💰 Financial Weight (Col 8)")
+            st.plotly_chart(px.pie(df_inv, values=v_col, names=c_col, hole=0.4), use_container_width=True)
 
         with r:
             st.markdown("#### 🛠️ Operational Health Score (%)")
-            h_df = df_inv.groupby(df_inv.columns[0]).agg({q_col: 'sum', f_col: 'sum'}).reset_index()
+            h_df = df_inv.groupby(c_col).agg({q_col: 'sum', f_col: 'sum'}).reset_index()
             h_df['Health %'] = (h_df[f_col] / h_df[q_col] * 100).round(1)
-            fig_bar = px.bar(h_df.sort_values('Health %'), x='Health %', y=df_inv.columns[0], 
-                             orientation='h', color='Health %', color_continuous_scale='RdYlGn')
-            st.plotly_chart(fig_bar, use_container_width=True)
+            h_df = h_df.sort_values('Health %')
+            
+            # Bar Chart with explicit score labels
+            fig_health = px.bar(h_df, x='Health %', y=c_col, orientation='h', 
+                               text='Health %', color='Health %', 
+                               color_continuous_scale='RdYlGn', range_color=[0, 100])
+            fig_health.update_traces(texttemplate='%{text}%', textposition='outside')
+            st.plotly_chart(fig_health, use_container_width=True)
 
-# --- 6. REGISTRATION (ENSURING DATA GOES TO COL 8) ---
+# --- 6. REGISTRY MODULE ---
 elif menu == "📝 Register New Equipment":
     st.subheader("📝 New Asset Registration")
-    with st.form("reg_form"):
-        c1, c2 = st.columns(2)
-        cat = c1.selectbox("Category", list(AAE_STRUCTURE.keys()))
-        sub = c2.selectbox("Subsystem", AAE_STRUCTURE[cat])
+    with st.form("reg_form", clear_on_submit=True):
+        col1, col2 = st.columns(2)
+        cat = col1.selectbox("Category", list(AAE_STRUCTURE.keys()))
+        sub = col2.selectbox("Subsystem", AAE_STRUCTURE[cat])
         code = st.text_input("Asset Code")
         qty = st.number_input("Quantity", min_value=1)
         cost = st.number_input("Unit Cost (ETB)", min_value=0.0)
-        
-        if st.form_submit_button("✅ Register Asset"):
-            total_val = qty * cost
-            # APPENDING: Cat, Sub, Code, Unit, Qty, Func, UnitCost, TotalValue (Col 8), Life, Age, NonFunc
-            new_row = [cat, sub, code, "Nos", qty, qty, cost, total_val, 10, 0, 0]
-            inv_ws.append_row(new_row)
-            st.success(f"Registered! Column 8 Value: {total_val:,.2f} Br")
-            st.rerun()
+        if st.form_submit_button("✅ Register"):
+            total_v = qty * cost
+            inv_ws.append_row([cat, sub, code, "Nos", qty, qty, cost, total_v, 10, 0, 0])
+            st.success(f"Registered {code} at {total_v:,.2f} Br"); st.rerun()
 
-# Rest of the modules (Inventory Status, Maintenance History) remain unchanged...
+# --- 7. INVENTORY STATUS ---
+elif menu == "🔎 Inventory Status":
+    st.subheader("🔎 Master Registry")
+    if not df_inv.empty:
+        edited_df = st.data_editor(df_inv, use_container_width=True, hide_index=True)
+        if st.button("💾 Sync Database"):
+            inv_ws.update([edited_df.columns.values.tolist()] + edited_df.values.tolist())
+            st.success("Synced!"); st.rerun()
+
+# --- 8. MAINTENANCE HISTORY ---
+elif menu == "🛠️ Maintenance History":
+    st.subheader("🛠️ Technical Failure Log")
+    with st.expander("🚨 Report Failure"):
+        with st.form("m_form"):
+            m_cat = st.selectbox("Category", list(AAE_STRUCTURE.keys()))
+            m_sub = st.selectbox("Subsystem", AAE_STRUCTURE[m_cat])
+            m_cause = st.selectbox("Root Cause", RCA_STANDARDS.get(m_cat, []) + RCA_STANDARDS["General"])
+            m_code = st.text_input("Asset Code")
+            if st.form_submit_button("Submit"):
+                maint_ws.append_row([datetime.now().strftime("%Y-%m-%d"), m_cat, m_sub, m_code, m_cause, "System", "Pending"])
+                st.success("Logged!"); st.rerun()
+    st.dataframe(df_maint, use_container_width=True)
+
 
 
 
