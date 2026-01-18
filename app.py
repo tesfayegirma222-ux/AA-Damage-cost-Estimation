@@ -236,11 +236,12 @@ if check_password():
         st.dataframe(df_maint, use_container_width=True, hide_index=True)
 
     elif menu == "🔎 Asset Registry":
-        st.subheader("🔎 Master Registry (Sheet1)")
+        st.subheader("🔎 Master Registry")
         edited_df = st.data_editor(df_inv, use_container_width=True, hide_index=True)
         if st.button("💾 Sync Database"):
             inv_ws.update([edited_df.columns.values.tolist()] + edited_df.values.tolist())
             st.success("Database synced!"); st.rerun()
+
 
 
 
