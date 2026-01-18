@@ -5,22 +5,25 @@ import gspread
 from google.oauth2.service_account import Credentials
 from datetime import datetime
 
-# --- 1. AAE OFFICIAL HIERARCHY ---
+# --- 1. AAE OFFICIAL HIERARCHY & RCA STANDARDS ---
 AAE_STRUCTURE = {
     "Electric Power Source": ["Electric Utility", "Generator"],
-    "Electric Power Distribution": ["ATS", "Breakers", "Power Cable", "Main Breakers", "DP"],
-    "UPS System": ["UPS", "UPS Battery"],
-    "CCTV System": ["Lane Camera", "Booth Camera", "Road Camera", "Plaza Camera"],
     "Auto-Railing System": ["Barrier Gate", "Controller"],
-    "Automatic Voltage Regulator": ["AVR"],
-    "HVAC System": ["Air Conditioning System"],
     "Illumination System": ["High Mast Light", "Compound Light", "Road Light", "Booth Light", "Plaza Light"],
-    "Electronic Display System": ["Canopy Light", "VMS", "LED Notice Board", "Fog Light", "Money Fee Display", "Passage Signal Lamp"],
+    "Electronic Display System": ["Canopy Light", "VMS", "LED Notice Board", "Fog Light"],
     "Pump System": ["Surface Water Pump", "Submersible Pump"],
-    "WIM System": ["Weight-In-Motion Sensor", "WIM Controller"]
+    "Overload System (WIM)": ["Weight-In-Motion Sensor", "WIM Controller"]
 }
 
-FAIL_CAUSES = ["Power Surge", "Wear & Tear", "Vandalism", "Accident", "Environmental (Dust/Heat)", "Software Error", "Battery Failure", "Unknown"]
+RCA_STANDARDS = {
+    "Electric Power Source": ["Fuel Contamination", "Battery Drain", "AVR Failure", "Coolant Leak", "Alternator Fault"],
+    "Auto-Railing System": ["Motor Burnout", "Limit Switch Misalignment", "Loop Detector Fault", "Mechanical Obstruction"],
+    "Illumination System": ["Lamp Burnout", "Ballast Failure", "Photocell Fault", "Cable Insulation Breakdown", "MCB Tripping"],
+    "Electronic Display System": ["Communication Timeout", "LED Module Failure", "Power Supply Unit (PSU) Fault", "Overheating"],
+    "Pump System": ["Dry Running", "Impeller Clogging", "Seal Leakage", "Phase Loss", "Pressure Switch Fault"],
+    "Overload System (WIM)": ["Sensor Calibration Drift", "Piezoelectric Damage", "Grounding Issue", "Inductive Loop Fault"],
+    "General": ["Power Surge", "Vandalism", "Accident", "Wear & Tear", "Software Error", "Unknown"]
+}
 
 # --- 2. SECURE CONNECTION ---
 def init_connection():
@@ -30,14 +33,12 @@ def init_connection():
         creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
         client = gspread.authorize(creds)
         sh = client.open_by_url(st.secrets["SHEET_URL"])
-        
         inv = next((s for s in sh.worksheets() if "inventory" in s.title.lower()), sh.get_worksheet(0))
         try:
             maint = sh.worksheet("Maintenance_Log")
         except:
             maint = sh.add_worksheet(title="Maintenance_Log", rows="1000", cols="10")
             maint.append_row(["Date", "Category", "Subsystem", "Asset Code", "Failure Cause", "Technician", "Status"])
-            
         return inv, maint
     except Exception as e:
         st.error(f"Connection Error: {e}")
@@ -45,19 +46,30 @@ def init_connection():
 
 inv_ws, maint_ws = init_connection()
 
-# --- 3. DATA ENGINE (ROBUST COLUMN HANDLING) ---
+# --- 3. DATA ENGINE (FIXED TOTAL VALUE CALCULATION) ---
 def load_data(worksheet):
     if not worksheet: return pd.DataFrame()
     data = worksheet.get_all_values()
     if len(data) < 2: return pd.DataFrame()
     
-    # Strip whitespace from headers to prevent KeyErrors
     headers = [str(h).strip() for h in data[0]]
     df = pd.DataFrame(data[1:], columns=headers)
     
+    # Convert numeric columns safely
     for col in df.columns:
         if any(k in col.lower() for k in ['qty', 'total', 'cost', 'value', 'life', 'age', 'func', 'non']):
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+    
+    # --- DYNAMIC TOTAL VALUE CORRECTION ---
+    # We find the columns for Qty and Unit Cost to force-calculate Value
+    q_col = next((c for c in df.columns if 'qty' in c.lower() or 'total' in c.lower()), None)
+    u_col = next((c for c in df.columns if 'unit cost' in c.lower() or 'unitcost' in c.lower()), None)
+    v_col = next((c for c in df.columns if 'value' in c.lower()), None)
+    
+    if q_col and u_col and v_col:
+        # Recalculate Value to ensure it's always correct regardless of what's in the sheet
+        df[v_col] = df[q_col] * df[u_col]
+        
     return df
 
 # --- 4. UI SETUP ---
@@ -68,115 +80,70 @@ df_maint = load_data(maint_ws)
 st.markdown("""
     <div style="background: #1E3A8A; color: white; padding: 15px; border-radius: 10px; text-align: center; margin-bottom: 20px;">
         <h2 style="margin:0;">Addis Ababa-Adama Expressway</h2>
-        <p style="margin:0;">Electromechanical Master Database & Maintenance Log</p>
+        <p style="margin:0;">Electromechanical Master Database (Live Status)</p>
     </div>
 """, unsafe_allow_html=True)
 
-menu = st.sidebar.radio("Navigation", ["🔎 Inventory Status", "📝 Register New Equipment", "🛠️ Maintenance History", "📊 Dashboard"])
+menu = st.sidebar.radio("Navigation", ["🔎 Inventory Status", "🛠️ Maintenance History", "📊 Dashboard"])
 
-# --- 5. MODULE: INVENTORY ---
+# --- 5. MODULE: INVENTORY (WITH RECALCULATION SAVE) ---
 if menu == "🔎 Inventory Status":
     st.subheader("🔎 Master Registry")
-    if df_inv.empty: st.warning("Database empty.")
+    if df_inv.empty:
+        st.warning("Database empty.")
     else:
         edited_df = st.data_editor(df_inv, use_container_width=True, hide_index=True)
-        if st.button("💾 Sync Inventory"):
+        if st.button("💾 Sync and Correct Values"):
+            # Recalculate values before saving back to sheet
+            v_col = next((c for c in edited_df.columns if 'value' in c.lower()), None)
+            q_col = next((c for c in edited_df.columns if 'qty' in c.lower() or 'total' in c.lower()), None)
+            u_col = next((c for c in edited_df.columns if 'unit cost' in c.lower() or 'unitcost' in c.lower()), None)
+            
+            if v_col and q_col and u_col:
+                edited_df[v_col] = edited_df[q_col] * edited_df[u_col]
+            
             inv_ws.update([edited_df.columns.values.tolist()] + edited_df.values.tolist())
-            st.success("Synced!"); st.rerun()
+            st.success("Database updated and values corrected!"); st.rerun()
 
-# --- 6. MODULE: REGISTRATION ---
-elif menu == "📝 Register New Equipment":
-    st.subheader("📝 New Asset Onboarding")
-    with st.form("reg_form"):
-        c1, c2 = st.columns(2)
-        cat = c1.selectbox("Category", list(AAE_STRUCTURE.keys()))
-        sub = c2.selectbox("Subsystem", AAE_STRUCTURE[cat])
-        code = st.text_input("Asset Code")
-        qty = st.number_input("Quantity", min_value=1)
-        cost = st.number_input("Unit Cost (ETB)", min_value=0.0)
-        if st.form_submit_button("Add Asset"):
-            # Ensure order: Category, Subsystem, Code, Unit, Total Qty, Functional, Unit Cost, Total Value, Life, Age, Non-Func
-            inv_ws.append_row([cat, sub, code, "Nos", qty, qty, cost, qty*cost, 10, 0, 0])
-            st.success("Registered!"); st.rerun()
-
-# --- 7. MODULE: MAINTENANCE HISTORY ---
-elif menu == "🛠️ Maintenance History":
-    st.subheader("🛠️ Failure Reporting & Logs")
-    with st.expander("➕ Log New Equipment Failure", expanded=True):
-        with st.form("maint_form"):
-            col1, col2, col3 = st.columns(3)
-            m_cat = col1.selectbox("Category", list(AAE_STRUCTURE.keys()))
-            m_sub = col2.selectbox("Subsystem", AAE_STRUCTURE[m_cat])
-            m_code = col3.text_input("Asset Code")
-            col4, col5 = st.columns(2)
-            m_cause = col4.selectbox("Root Cause of Failure", FAIL_CAUSES)
-            m_tech = col5.text_input("Technician Name")
-            if st.form_submit_button("🚨 Submit Failure Report"):
-                new_entry = [datetime.now().strftime("%Y-%m-%d"), m_cat, m_sub, m_code, m_cause, m_tech, "Pending"]
-                maint_ws.append_row(new_entry)
-                st.success("Failure logged!"); st.rerun()
-    st.dataframe(df_maint, use_container_width=True)
-
-# --- 8. DASHBOARD (FIXED KEYERROR PROTECTIONS) ---
+# --- 6. MODULE: DASHBOARD (TOTAL VALUE METRIC) ---
 elif menu == "📊 Dashboard":
-    st.subheader("📊 System Health & Root Cause Analysis")
+    st.subheader("📊 System Health & Financial Analytics")
     
     if not df_inv.empty:
-        # --- SAFE COLUMN FINDER ---
-        # We search for columns using lowercase keywords to avoid NameErrors
-        cols = df_inv.columns
-        c_col = cols[0] # Default to first column for Category
-        q_col = next((c for c in cols if 'qty' in c.lower() or 'total' in c.lower()), None)
-        f_col = next((c for c in cols if 'func' in c.lower()), None)
-        v_col = next((c for c in cols if 'value' in c.lower()), None)
-
-        # Metrics Row with Key Check
+        v_col = next((c for c in df_inv.columns if 'value' in c.lower()), None)
+        q_col = next((c for c in df_inv.columns if 'qty' in c.lower() or 'total' in c.lower()), None)
+        f_col = next((c for c in df_inv.columns if 'func' in c.lower()), None)
+        c_col = df_inv.columns[0]
+        
+        # --- METRICS ---
         m1, m2, m3 = st.columns(3)
+        total_value = df_inv[v_col].sum() if v_col else 0
+        m1.metric("Total Asset Value", f"{total_value:,.2f} Br")
         
-        # Total Value Calculation with Fallback
-        val_display = f"{df_inv[v_col].sum():,.2f} Br" if v_col else "Column Missing"
-        m1.metric("Total System Value", val_display)
+        total_assets = df_inv[q_col].sum() if q_col else 0
+        m2.metric("Total Assets (Qty)", int(total_assets))
         
-        # Quantity Metric
-        qty_display = int(df_inv[q_col].sum()) if q_col else 0
-        m2.metric("Total Assets", qty_display)
-        
-        # Health Metric
-        if q_col and f_col and df_inv[q_col].sum() > 0:
-            health_pct = (df_inv[f_col].sum() / df_inv[q_col].sum()) * 100
-            m3.metric("Overall Health", f"{health_pct:.1f}%")
-        else:
-            m3.metric("Overall Health", "N/A")
+        health = (df_inv[f_col].sum() / total_assets * 100) if total_assets > 0 else 0
+        m3.metric("System Health", f"{health:.1f}%")
 
         st.divider()
-        
-        # Row 1: Health Bar and RCA Pie
-        col_left, col_right = st.columns(2)
-        
-        with col_left:
-            st.markdown("#### 🛠️ System Health by Category (%)")
-            if q_col and f_col:
-                h_df = df_inv.groupby(c_col).agg({q_col: 'sum', f_col: 'sum'}).reset_index()
-                h_df['Health %'] = (h_df[f_col] / h_df[q_col] * 100).round(1)
-                h_df = h_df.sort_values(by='Health %')
-                
-                fig_health = px.bar(h_df, x='Health %', y=c_col, orientation='h',
-                                   text=h_df['Health %'].apply(lambda x: f'{x}%'),
-                                   color='Health %', color_continuous_scale='RdYlGn', range_color=[0, 100])
-                st.plotly_chart(fig_health, use_container_width=True)
-            else:
-                st.error("Cannot generate Health Chart: 'Qty' or 'Functional' columns not found.")
 
-        with col_right:
-            st.markdown("#### 🔍 Root Cause Analysis (%)")
-            if not df_maint.empty and 'Failure Cause' in df_maint.columns:
-                rca_counts = df_maint['Failure Cause'].value_counts().reset_index()
-                rca_counts.columns = ['Cause', 'Count']
-                fig_rca = px.pie(rca_counts, values='Count', names='Cause', hole=0.4,
-                                color_discrete_sequence=px.colors.sequential.Reds_r)
-                st.plotly_chart(fig_rca, use_container_width=True)
-            else:
-                st.info("No failure data available yet. Please log failures in 'Maintenance History'.")
+        # --- CHARTS ---
+        l, r = st.columns(2)
+        with l:
+            st.markdown("#### 🛠️ Health Score by Category")
+            h_df = df_inv.groupby(c_col).agg({q_col: 'sum', f_col: 'sum'}).reset_index()
+            h_df['Health %'] = (h_df[f_col] / h_df[q_col] * 100).round(1)
+            fig_h = px.bar(h_df, x='Health %', y=c_col, orientation='h', color='Health %', 
+                           color_continuous_scale='RdYlGn', range_color=[0, 100])
+            st.plotly_chart(fig_h, use_container_width=True)
+
+        with r:
+            st.markdown("#### 💰 Value Distribution (ETB)")
+            fig_v = px.pie(df_inv, values=v_col, names=c_col, hole=0.4, 
+                           title="Financial Weight by Category")
+            st.plotly_chart(fig_v, use_container_width=True)
+
 
 
 
