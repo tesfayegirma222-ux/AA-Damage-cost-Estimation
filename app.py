@@ -72,8 +72,12 @@ def load_data(worksheet):
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
     return df
 
-# --- 5. PROFESSIONAL UI STYLING ---
+# --- 5. PROFESSIONAL UI STYLING & NAVIGATION LOGO ---
 st.set_page_config(page_title="AAE Executive Portal", layout="wide")
+
+# Sidebar Logo
+logo_url = "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a2/Logo_of_the_Addis_Ababa%E2%80%93Adama_Expressway.png/300px-Logo_of_the_Addis_Ababa%E2%80%93Adama_Expressway.png"
+st.sidebar.image(logo_url, use_container_width=True)
 
 st.markdown("""
     <style>
@@ -186,6 +190,7 @@ elif menu == "🔎 Asset Registry":
         if st.button("💾 Sync Sheet1"):
             inv_ws.update([edited_df.columns.values.tolist()] + edited_df.values.tolist())
             st.success("Data Synced!"); st.rerun()
+
 
 
 
