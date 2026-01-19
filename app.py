@@ -139,7 +139,6 @@ if check_password():
             s_col, id_col = df_inv.columns[1], df_inv.columns[2]
             life_col, used_col = df_inv.columns[8], df_inv.columns[9]
             
-            # --- TOP METRICS ---
             k1, k2, k3, k4 = st.columns(4)
             k1.metric("💰 Portfolio Value", f"{df_inv[v_col].sum():,.0f} Br")
             k2.metric("📦 Active Assets", int(df_inv[q_col].sum()))
@@ -149,7 +148,7 @@ if check_password():
 
             st.divider()
 
-            # --- LIFE-AGE & WATCHLIST ---
+            # --- LIFE-AGE ---
             st.markdown("#### ⏳ Asset Life-Age & Sustainability Analysis")
             col_age1, col_age2 = st.columns([6, 4])
             df_inv['Remaining %'] = ((df_inv[life_col] - df_inv[used_col]) / df_inv[life_col] * 100).clip(0, 100).fillna(0)
@@ -164,37 +163,49 @@ if check_password():
 
             st.divider()
 
-            # --- RESTORED HEALTH & VALUATION ---
+            # --- HEALTH & VALUATION ---
             col_h1, col_h2 = st.columns(2)
             with col_h1:
-                st.markdown("#### ⚡ System Health (Functional %)")
+                st.markdown("#### ⚡ System Health")
                 h_df = df_inv.groupby(c_col).agg({q_col: 'sum', f_col: 'sum'}).reset_index()
                 h_df['Health %'] = (h_df[f_col] / h_df[q_col] * 100).round(1).fillna(0)
                 fig_bar = px.bar(h_df.sort_values('Health %'), x='Health %', y=c_col, orientation='h', 
                                  text='Health %', color='Health %', color_continuous_scale='Greens')
+                fig_bar.update_traces(texttemplate='%{text}%', textposition='outside')
                 st.plotly_chart(fig_bar, use_container_width=True)
             with col_h2:
-                st.markdown("#### 💎 Asset Valuation by Subsystem")
+                st.markdown("#### 💎 Valuation by Subsystem")
                 fig_pie = px.pie(df_inv, values=v_col, names=s_col, hole=0.5)
                 st.plotly_chart(fig_pie, use_container_width=True)
 
             st.divider()
 
-            # --- PREVENTIVE & RCA ---
-            st.markdown("#### 🛠️ Maintenance & RCA Breakdown")
-            col_m1, col_m2 = st.columns(2)
-            with col_m1:
-                if not df_prev.empty:
-                    pm_sum = df_prev.groupby('Category').size().reset_index(name='PM Count')
-                    fig_pm = px.bar(pm_sum, x='Category', y='PM Count', title="PM Frequency")
-                    st.plotly_chart(fig_pm, use_container_width=True)
-                else: st.info("No PM logs yet.")
-            with col_m2:
+            # --- LABELED RCA & PM ---
+            st.markdown("#### 🎯 Root Cause Analysis (RCA) & Maintenance Breakdown")
+            col_r1, col_r2 = st.columns(2)
+            with col_r1:
                 if not df_maint.empty:
+                    # RCA Calculation with Percentage Labels
                     rca_data = df_maint.groupby(['Category', 'Failure Cause']).size().reset_index(name='Incidents')
-                    fig_rca = px.bar(rca_data, x='Incidents', y='Category', color='Failure Cause', orientation='h', title="Root Cause Analysis")
+                    cat_totals = df_maint.groupby('Category').size().reset_index(name='Total_Cat')
+                    rca_final = rca_data.merge(cat_totals, on='Category')
+                    rca_final['%'] = (rca_final['Incidents'] / rca_final['Total_Cat'] * 100).round(1)
+                    
+                    fig_rca = px.bar(rca_final, x='Incidents', y='Category', color='Failure Cause', orientation='h',
+                                     text=rca_final.apply(lambda x: f"{x['Failure Cause']} ({x['%']}%)", axis=1),
+                                     title="Incident Root Causes")
+                    fig_rca.update_traces(textposition='inside')
+                    fig_rca.update_layout(barmode='stack', showlegend=False)
                     st.plotly_chart(fig_rca, use_container_width=True)
-                else: st.info("No failure logs yet.")
+                else: st.info("No failure logs.")
+
+            with col_r2:
+                if not df_prev.empty:
+                    pm_sum = df_prev.groupby('Category').size().reset_index(name='Count')
+                    fig_pm = px.bar(pm_sum, x='Category', y='Count', title="PM Frequency", text='Count')
+                    fig_pm.update_traces(textposition='outside')
+                    st.plotly_chart(fig_pm, use_container_width=True)
+                else: st.info("No PM logs.")
 
     elif menu == "📝 Add New Asset":
         st.subheader("📝 New Equipment Registration")
@@ -243,6 +254,7 @@ if check_password():
         if st.button("💾 Sync Database"):
             inv_ws.update([edited_df.columns.values.tolist()] + edited_df.values.tolist())
             st.success("Database synced!"); st.rerun()
+
 
 
 
