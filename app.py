@@ -53,12 +53,12 @@ if check_password():
         "Electric Power Source": ["Fuel Contamination", "AVR Failure", "Battery Dead", "Utility Outage", "Aging"],
         "Electric Power Distribution": ["MCB Tripped", "Contact Burnout", "Insulation Failure", "Loose Connection", "Aging"],
         "CCTV System": ["Connector Corrosion", "Power Supply Fault", "IP Conflict", "Lens Fogging", "Aging"],
-        "General": ["Vandalism", "Physical Accident", "Extreme Weather", "Wear & Tear", "Aging"],
         "Auto-Railing System": ["Lack of Lubrication", "Dirty or Obstructed Tracks", "Worn-Out component", "Mis alignment", "Rust or Corrosion", "Aging"],
         "HVAC System": ["Clogged or Dirty Air Filters ", "Refrigerant Leaks ", "Faulty Capacitors and Relays", "Dirty Condenser/Evaporator Coils", "Clogged Condensate Drain Lines", "Lack of Motor Lubrication/Bearing Failure"],
         "Illumination System": ["Burnt-out Lamps", "Overheating", "Wiring Issues:", "Overloaded Circuits", "Aging"],
         "Electronic Display System": ["Overheating", "Capacitor Failure", "Improper Cleaning", "environmental condition", "Aging"],
         "Pump System": ["Lack of lubrication", "Cavitation", "Mis alignment", "Dry running", "Loose wiring", "Corrosion", "Aging"],
+        "General": ["Vandalism", "Physical Accident", "Extreme Weather", "Wear & Tear", "Aging"]
     }
 
     PM_TASKS = {
@@ -282,6 +282,7 @@ if check_password():
         if st.button("💾 Sync Database"):
             inv_ws.update([edited_df.columns.values.tolist()] + edited_df.values.tolist())
             st.success("Database synced!"); st.rerun()
+
 
 
 
