@@ -50,7 +50,7 @@ if check_password():
     }
 
     RCA_STANDARDS = {
-        "Electric Power Source": ["Fuel Contamination", "AVR Failure", "Battery Dead", "Utility Outage", "Aging"],
+        "Electric Power Source/Generator": ["Fuel Contamination", "AVR Failure", "Battery Dead", "Utility Outage", "Aging"],
         "Electric Power Distribution": ["MCB Tripped", "Contact Burnout", "Insulation Failure", "Loose Connection", "Aging"],
         "CCTV System": ["Connector Corrosion", "Power Supply Fault", "IP Conflict", "Lens Fogging", "Aging"],
         "Auto-Railing System": ["Lack of Lubrication", "Dirty or Obstructed Tracks", "Worn-Out component", "Mis alignment", "Rust or Corrosion", "Aging"],
@@ -63,7 +63,7 @@ if check_password():
     }
 
     PM_TASKS = {
-        "Electric Power Source": ["Fuel Level Check", "Battery Voltage Test", "Air Filter Change", "Coolant Level Check", "Oil Change", "Generator Load Test","Cooling system inspection",  "Exhaust system Inspection", "Oil Change" ],
+        "Electric Power Source/Generator": ["Fuel Level Check", "Battery Voltage Test", "Air Filter Change", "Coolant Level Check", "Oil Change", "Generator Load Test","Cooling system inspection",  "Exhaust system Inspection", "Oil Change" ],
         "Electric Power Distribution": ["Infrared Thermography", "Tightening Terminals", "Breaker Exercise", "Cleaning Busbars", "Transformer Oil Test"],
         "UPS System": ["Battery Discharge Test", "Capacitor Inspection", "Fan Dusting", "Tightening Terminals", "Firmware Check"],
         "CCTV System": ["Lens Cleaning", "Housing Inspection", "Connector Waterproofing", "Storage Integrity Check", "Focus Adjustment"],
@@ -295,6 +295,7 @@ if check_password():
         if st.button("💾 Sync Database"):
             inv_ws.update([edited_df.columns.values.tolist()] + edited_df.values.tolist())
             st.success("Database synced!"); st.rerun()
+
 
 
 
