@@ -102,6 +102,10 @@ if check_password():
 
     st.set_page_config(page_title="AAE EMA Portal", layout="wide")
     
+    # --- RESTORED SIDEBAR LOGO ---
+    logo_url = "https://skilled-sapphire-ragpx5z8le.edgeone.app/images.jpg"
+    st.sidebar.image(logo_url, use_container_width=True)
+
     st.markdown("""
         <style>
         .stApp { background-color: #f8fafc; }
@@ -180,12 +184,11 @@ if check_password():
 
             st.divider()
 
-            # --- LABELED RCA & PM ---
+            # --- LABELED RCA & PM TREND ---
             st.markdown("#### 🎯 Root Cause Analysis (RCA) & Maintenance Breakdown")
             col_r1, col_r2 = st.columns(2)
             with col_r1:
                 if not df_maint.empty:
-                    # RCA Calculation with Percentage Labels
                     rca_data = df_maint.groupby(['Category', 'Failure Cause']).size().reset_index(name='Incidents')
                     cat_totals = df_maint.groupby('Category').size().reset_index(name='Total_Cat')
                     rca_final = rca_data.merge(cat_totals, on='Category')
@@ -254,6 +257,7 @@ if check_password():
         if st.button("💾 Sync Database"):
             inv_ws.update([edited_df.columns.values.tolist()] + edited_df.values.tolist())
             st.success("Database synced!"); st.rerun()
+
 
 
 
