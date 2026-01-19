@@ -118,10 +118,11 @@ if check_password():
     st.set_page_config(page_title="AAE EMA Portal", layout="wide")
     
     # --- SIDEBAR LOGOS ---
-    logo_url1 = "https://secondary-coral-qeyr04lfdk.edgeone.app/asset.jpg"
-    st.sidebar.image(logo_url1, use_container_width=True)
-    logo_url2 = "https://civic-plum-k9em9ndfai.edgeone.app/electrical.jpg"
-    st.sidebar.image(logo_url2, use_container_width=True)
+    logo_url = "https://secondary-coral-qeyr04lfdk.edgeone.app/asset.jpg"
+    st.sidebar.image(logo_url, use_container_width=True)
+      # --- SIDEBAR LOGO ---
+    logo_url = "https://civic-plum-k9em9ndfai.edgeone.app/electrical.jpg"
+    st.sidebar.image(logo_url, use_container_width=True)
 
     st.markdown("""
         <style>
@@ -295,6 +296,7 @@ if check_password():
         if st.button("💾 Sync Database"):
             inv_ws.update([edited_df.columns.values.tolist()] + edited_df.values.tolist())
             st.success("Database synced!"); st.rerun()
+
 
 
 
