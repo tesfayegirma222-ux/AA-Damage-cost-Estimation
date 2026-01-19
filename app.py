@@ -88,9 +88,8 @@ if check_password():
         return df
 
     st.set_page_config(page_title="AAE EMA Portal", layout="wide")
-    logo_url = "https://skilled-sapphire-ragpx5z8le.edgeone.app/images.jpg"
-    st.sidebar.image(logo_url, use_container_width=True)
-
+    
+    # Custom CSS for better UI
     st.markdown("""
         <style>
         .stApp { background-color: #f8fafc; }
@@ -101,7 +100,7 @@ if check_password():
         }
         div[data-testid="metric-container"] {
             background: white; padding: 15px; border-radius: 10px;
-            border-left: 5px solid #10b981; box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            border-left: 5px solid #3b82f6; box-shadow: 0 1px 3px rgba(0,0,0,0.1);
         }
         </style>
         <div class="main-header">
@@ -123,10 +122,12 @@ if check_password():
         if df_inv.empty:
             st.info("Inventory is empty. Please register assets.")
         else:
+            # Column Mapping (adjust indexes if your sheet changes)
             v_col, q_col, f_col, c_col = df_inv.columns[7], df_inv.columns[4], df_inv.columns[5], df_inv.columns[0]
             s_col = df_inv.columns[1]
             life_col, used_col = df_inv.columns[8], df_inv.columns[9]
             
+            # --- TOP KEY METRICS ---
             k1, k2, k3, k4 = st.columns(4)
             k1.metric("💰 Portfolio Value", f"{df_inv[v_col].sum():,.0f} Br")
             k2.metric("📦 Active Assets", int(df_inv[q_col].sum()))
@@ -136,29 +137,54 @@ if check_password():
 
             st.divider()
 
-            # --- LIFE-AGE ANALYSIS ---
+            # --- UPDATED: LIFE-AGE & SUSTAINABILITY ANALYSIS ---
             st.markdown("#### ⏳ Asset Life-Age & Sustainability Analysis")
             col_age1, col_age2 = st.columns([6, 4])
+            
             with col_age1:
+                # Calculations for replacement logic
+                current_year = datetime.now().year
                 df_inv['Remaining %'] = ((df_inv[life_col] - df_inv[used_col]) / df_inv[life_col] * 100).clip(0, 100).fillna(0)
-                fig_age = px.scatter(df_inv, x=used_col, y='Remaining %', size=v_col, color=s_col,
-                                     hover_name=df_inv.columns[2], 
-                                     labels={used_col: "Years in Service", 'Remaining %': "Remaining Useful Life (%)", s_col: "Subsystem"},
-                                     title="Asset Replacement Matrix")
-                fig_age.add_hline(y=20, line_dash="dot", line_color="red", annotation_text="Critical Zone")
-                fig_age.update_layout(height=400, plot_bgcolor='white')
+                df_inv['Years Left'] = (df_inv[life_col] - df_inv[used_col]).clip(0)
+                df_inv['Est. Replacement'] = current_year + df_inv['Years Left']
+                
+                fig_age = px.scatter(
+                    df_inv, 
+                    x=used_col, 
+                    y='Remaining %', 
+                    size=v_col, 
+                    color='Remaining %',
+                    color_continuous_scale='RdYlGn',
+                    hover_name=df_inv.columns[2], 
+                    hover_data=['Est. Replacement', s_col],
+                    labels={used_col: "Years in Service", 'Remaining %': "Life Remaining (%)"},
+                    title="Asset Replacement Matrix (Size = Asset Value)"
+                )
+                fig_age.add_hline(y=20, line_dash="dot", line_color="red", annotation_text="Critical (Replace Soon)")
+                fig_age.update_layout(height=450, plot_bgcolor='white', coloraxis_showscale=False)
                 st.plotly_chart(fig_age, use_container_width=True)
 
             with col_age2:
-                sub_life = df_inv.groupby(s_col)['Remaining %'].mean().reset_index()
-                fig_sub_pie = px.pie(sub_life, values='Remaining %', names=s_col, hole=0.6,
-                                     title="Avg Remaining Life by Subsystem",
-                                     color_discrete_sequence=px.colors.qualitative.Safe)
-                fig_sub_pie.update_layout(height=400)
-                st.plotly_chart(fig_sub_pie, use_container_width=True)
+                # Sustainability summary table
+                st.write("📈 **Sustainability Risk Summary**")
+                critical_assets = df_inv[df_inv['Remaining %'] <= 20].shape[0]
+                mid_assets = df_inv[(df_inv['Remaining %'] > 20) & (df_inv['Remaining %'] <= 50)].shape[0]
+                healthy_assets = df_inv[df_inv['Remaining %'] > 50].shape[0]
+                
+                risk_data = pd.DataFrame({
+                    "Status": ["🔴 Critical (<20%)", "🟡 Warning (20-50%)", "🟢 Healthy (>50%)"],
+                    "Count": [critical_assets, mid_assets, healthy_assets]
+                })
+                st.table(risk_data)
+                
+                avg_life = df_inv.groupby(s_col)['Remaining %'].mean().reset_index()
+                fig_mini = px.bar(avg_life, x='Remaining %', y=s_col, orientation='h', title="Avg Life by Subsystem")
+                fig_mini.update_layout(height=250, margin=dict(l=0, r=0, t=30, b=0))
+                st.plotly_chart(fig_mini, use_container_width=True)
 
             st.divider()
             
+            # --- OTHER ANALYTICS ---
             l_col, r_col = st.columns([1, 1])
             with l_col:
                 st.markdown("#### ⚡ System Health")
@@ -166,7 +192,7 @@ if check_password():
                 h_df['Health %'] = (h_df[f_col] / h_df[q_col] * 100).round(1).fillna(0)
                 fig_bar = px.bar(h_df.sort_values('Health %'), x='Health %', y=c_col, orientation='h', 
                                  text='Health %', color='Health %', color_continuous_scale='Greens', range_x=[0, 125])
-                fig_bar.update_traces(texttemplate='%{text}%', textposition='outside', marker_line_color='#064e3b', marker_line_width=1.5)
+                fig_bar.update_traces(texttemplate='%{text}%', textposition='outside')
                 fig_bar.update_layout(yaxis_title=None, xaxis_visible=False, height=400, coloraxis_showscale=False)
                 st.plotly_chart(fig_bar, use_container_width=True)
 
@@ -178,34 +204,23 @@ if check_password():
 
             st.divider()
 
-            # --- UPDATED: RCA PERCENTAGE DIVIDED BY CATEGORY ---
-            st.markdown("#### 🎯 Root Cause Analysis (RCA) - Percentage Breakdown by Category")
+            # --- RCA ANALYSIS ---
+            st.markdown("#### 🎯 Root Cause Analysis (RCA) - Percentage Breakdown")
             if not df_maint.empty:
-                # Group by Category and Root Cause
                 rca_data = df_maint.groupby(['Category', 'Failure Cause']).size().reset_index(name='Incidents')
-                
-                # Calculate Total incidents per Category for the percentage divisor
                 cat_totals = df_maint.groupby('Category').size().reset_index(name='Total_Cat_Incidents')
                 rca_final = rca_data.merge(cat_totals, on='Category')
-                
-                # Calculate % of failures within that specific Category
                 rca_final['Cat_Percentage'] = (rca_final['Incidents'] / rca_final['Total_Cat_Incidents'] * 100).round(1)
 
                 fig_rca = px.bar(rca_final, 
                                  x='Cat_Percentage', y='Category', color='Failure Cause',
                                  orientation='h',
                                  text=rca_final.apply(lambda x: f"{x['Failure Cause']}: {x['Cat_Percentage']}%", axis=1),
-                                 title="Root Cause Distribution within Categories",
+                                 barmode='stack',
                                  color_discrete_sequence=px.colors.qualitative.Pastel)
                 
                 fig_rca.update_traces(textposition='inside')
-                fig_rca.update_layout(
-                    xaxis_title="Percentage of Category Total Failures (%)", 
-                    yaxis_title=None,
-                    height=500,
-                    barmode='stack',
-                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-                )
+                fig_rca.update_layout(xaxis_title="Percentage of Category Total Failures (%)", yaxis_title=None, height=500)
                 st.plotly_chart(fig_rca, use_container_width=True)
 
     elif menu == "📝 Add New Asset":
@@ -217,8 +232,10 @@ if check_password():
             a_code = st.text_input("Asset Code")
             a_qty = st.number_input("Quantity", min_value=1)
             a_cost = st.number_input("Unit Cost (Br)", min_value=0.0)
+            a_life = st.number_input("Expected Design Life (Years)", min_value=1, value=10)
             if st.form_submit_button("🚀 Commit to Sheet1"):
-                inv_ws.append_row([sel_cat, sel_sub, a_code, "Nos", a_qty, a_qty, a_cost, a_qty*a_cost, 10, 0, 0])
+                # Appends to: Category, Subsystem, Code, Unit, Qty, Func_Qty, UnitCost, Total, Life, Used, Out
+                inv_ws.append_row([sel_cat, sel_sub, a_code, "Nos", a_qty, a_qty, a_cost, a_qty*a_cost, a_life, 0, 0])
                 st.success("Registered!"); st.rerun()
 
     elif menu == "🛠️ Failure Logs":
@@ -241,6 +258,7 @@ if check_password():
         if st.button("💾 Sync Database"):
             inv_ws.update([edited_df.columns.values.tolist()] + edited_df.values.tolist())
             st.success("Database synced!"); st.rerun()
+
 
 
 
