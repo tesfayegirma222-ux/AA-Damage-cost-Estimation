@@ -143,9 +143,18 @@ if check_password():
             s_col, id_col = df_inv.columns[1], df_inv.columns[2]
             life_col, used_col = df_inv.columns[8], df_inv.columns[9]
             
-            # --- UPDATED KPI ROW (Added Maintenance Log Count) ---
+            # --- PORTFOLIO VALUE FORMATTING ---
+            total_val = df_inv[v_col].sum()
+            if total_val >= 1_000_000:
+                display_val = f"{total_val/1_000_000:.2f}M Br"
+            elif total_val >= 1_000:
+                display_val = f"{total_val/1_000:.1f}K Br"
+            else:
+                display_val = f"{total_val:,.0f} Br"
+
+            # --- KPI ROW ---
             k1, k2, k3, k4, k5 = st.columns(5)
-            k1.metric("💰 Portfolio Value", f"{df_inv[v_col].sum():,.0f} Br")
+            k1.metric("💰 Portfolio Value", display_val, help=f"Exact Value: {total_val:,.2f} Br")
             k2.metric("📦 Active Assets", int(df_inv[q_col].sum()))
             health_idx = (df_inv[f_col].sum() / df_inv[q_col].sum() * 100) if df_inv[q_col].sum() > 0 else 0
             k3.metric("🏥 Health Index", f"{health_idx:.1f}%")
@@ -267,6 +276,7 @@ if check_password():
         if st.button("💾 Sync Database"):
             inv_ws.update([edited_df.columns.values.tolist()] + edited_df.values.tolist())
             st.success("Database synced!"); st.rerun()
+
 
 
 
