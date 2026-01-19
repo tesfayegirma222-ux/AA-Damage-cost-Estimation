@@ -3,7 +3,7 @@ import pandas as pd
 import plotly.express as px
 import gspread
 from google.oauth2.service_account import Credentials
-from datetime import datetime, timedelta
+from datetime import datetime
 
 # --- 0. AUTHENTICATION SYSTEM ---
 def check_password():
@@ -64,31 +64,17 @@ if check_password():
             client = gspread.authorize(creds)
             sh = client.open_by_url(st.secrets["SHEET_URL"])
             inv = sh.worksheet("Sheet1")
-            
-            # Failure Logs
-            try: maint = sh.worksheet("Maintenance_Log")
-            except: 
+            try:
+                maint = sh.worksheet("Maintenance_Log")
+            except:
                 maint = sh.add_worksheet(title="Maintenance_Log", rows="1000", cols="6")
                 maint.append_row(["Date", "Category", "Subsystem", "Asset Code", "Failure Cause", "Technician"])
-            
-            # PM Activity
-            try: pm_ws = sh.worksheet("PM_Activity")
-            except:
-                pm_ws = sh.add_worksheet(title="PM_Activity", rows="1000", cols="6")
-                pm_ws.append_row(["Date", "Category", "Subsystem", "Asset Code", "Activity Type", "Next Due Date"])
-
-            # NEW: Removed Assets Sheet
-            try: rem_ws = sh.worksheet("Removed_Assets")
-            except:
-                rem_ws = sh.add_worksheet(title="Removed_Assets", rows="1000", cols="7")
-                rem_ws.append_row(["Date", "Category", "Subsystem", "Asset Code", "Reason", "Value At Removal", "Technician"])
-                
-            return inv, maint, pm_ws, rem_ws
+            return inv, maint
         except Exception as e:
             st.error(f"Connection Error: {e}")
-            return None, None, None, None
+            return None, None
 
-    inv_ws, maint_ws, pm_ws, rem_ws = init_connection()
+    inv_ws, maint_ws = init_connection()
 
     def load_data(worksheet):
         if not worksheet: return pd.DataFrame()
@@ -96,7 +82,7 @@ if check_password():
         if len(data) < 2: return pd.DataFrame()
         headers = [str(h).strip() for h in data[0]]
         df = pd.DataFrame(data[1:], columns=headers)
-        for col in df.columns:
+        for i, col in enumerate(df.columns):
             if any(k in col.lower() for k in ['qty', 'total', 'cost', 'value', 'func', 'life', 'age']):
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
         return df
@@ -126,71 +112,111 @@ if check_password():
 
     df_inv = load_data(inv_ws)
     df_maint = load_data(maint_ws)
-    df_pm = load_data(pm_ws)
-    df_rem = load_data(rem_ws)
 
     if st.sidebar.button("🔓 Logout"):
         st.session_state["password_correct"] = False
         st.rerun()
 
-    menu = st.sidebar.radio("Navigation", ["📊 Smart Dashboard", "🔎 Asset Registry", "📝 Add New Asset", "🛠️ Logs & Maintenance"])
+    menu = st.sidebar.radio("Navigation", ["📊 Smart Dashboard", "🔎 Asset Registry", "📝 Add New Asset", "🛠️ Failure Logs"])
 
     if menu == "📊 Smart Dashboard":
         if df_inv.empty:
             st.info("Inventory is empty. Please register assets.")
         else:
             v_col, q_col, f_col, c_col = df_inv.columns[7], df_inv.columns[4], df_inv.columns[5], df_inv.columns[0]
-            s_col, id_col = df_inv.columns[1], df_inv.columns[2]
+            s_col = df_inv.columns[1]
+            id_col = df_inv.columns[2] # Asset Code
             life_col, used_col = df_inv.columns[8], df_inv.columns[9]
             
-            # --- KPI METRICS ---
             k1, k2, k3, k4 = st.columns(4)
             k1.metric("💰 Portfolio Value", f"{df_inv[v_col].sum():,.0f} Br")
             k2.metric("📦 Active Assets", int(df_inv[q_col].sum()))
             health = (df_inv[f_col].sum() / df_inv[q_col].sum() * 100) if df_inv[q_col].sum() > 0 else 0
             k3.metric("🏥 Health Index", f"{health:.1f}%")
-            
-            # NEW Removed Feature Metric
-            removed_val = df_rem['Value At Removal'].sum() if not df_rem.empty else 0
-            k4.metric("🗑️ Retired Assets", f"{len(df_rem)} Items", delta=f"{removed_val:,.0f} Br")
+            k4.metric("🚨 Total Failures", len(df_maint) if not df_maint.empty else 0)
 
             st.divider()
 
-            # --- LIFE-AGE & REMOVAL ANALYSIS ---
-            st.markdown("#### ⏳ Asset Life-Age & Retirement Analysis")
+            # --- LIFE-AGE ANALYSIS ---
+            st.markdown("#### ⏳ Asset Life-Age & Sustainability Analysis")
             col_age1, col_age2 = st.columns([6, 4])
+            
+            # Calculate Remaining Life %
             df_inv['Remaining %'] = ((df_inv[life_col] - df_inv[used_col]) / df_inv[life_col] * 100).clip(0, 100).fillna(0)
             
             with col_age1:
                 fig_age = px.scatter(df_inv, x=used_col, y='Remaining %', size=v_col, color=s_col,
-                                     hover_name=id_col, title="Asset Replacement Matrix")
-                fig_age.add_hline(y=20, line_dash="dot", line_color="red")
+                                     hover_name=id_col, 
+                                     labels={used_col: "Years in Service", 'Remaining %': "Remaining Useful Life (%)", s_col: "Subsystem"},
+                                     title="Asset Replacement Matrix")
+                fig_age.add_hline(y=20, line_dash="dot", line_color="red", annotation_text="Critical Zone")
+                fig_age.update_layout(height=400, plot_bgcolor='white')
                 st.plotly_chart(fig_age, use_container_width=True)
 
             with col_age2:
-                st.markdown("##### 📉 Disposal Reasons")
-                if not df_rem.empty:
-                    fig_rem = px.pie(df_rem, names='Reason', hole=0.4, title="Asset Retirement Drivers")
-                    st.plotly_chart(fig_rem, use_container_width=True)
-                else:
-                    st.info("No retired assets recorded to show distribution.")
+                # LISTING WARNING AND CRITICAL ITEMS
+                st.markdown("##### ⚠️ Replacement Watchlist")
+                # Filter for Critical (<20%) and Warning (20-40%)
+                critical_df = df_inv[df_inv['Remaining %'] <= 20][[id_col, s_col, 'Remaining %']]
+                warning_df = df_inv[(df_inv['Remaining %'] > 20) & (df_inv['Remaining %'] <= 40)][[id_col, s_col, 'Remaining %']]
+                
+                tab1, tab2 = st.tabs(["🔴 Critical (<20%)", "🟡 Warning (20-40%)"])
+                with tab1:
+                    if not critical_df.empty:
+                        st.dataframe(critical_df.sort_values('Remaining %'), hide_index=True, use_container_width=True)
+                    else:
+                        st.success("No assets in critical zone.")
+                with tab2:
+                    if not warning_df.empty:
+                        st.dataframe(warning_df.sort_values('Remaining %'), hide_index=True, use_container_width=True)
+                    else:
+                        st.info("No assets in warning zone.")
+
+            st.divider()
+            
+            l_col, r_col = st.columns([1, 1])
+            with l_col:
+                st.markdown("#### ⚡ System Health")
+                h_df = df_inv.groupby(c_col).agg({q_col: 'sum', f_col: 'sum'}).reset_index()
+                h_df['Health %'] = (h_df[f_col] / h_df[q_col] * 100).round(1).fillna(0)
+                fig_bar = px.bar(h_df.sort_values('Health %'), x='Health %', y=c_col, orientation='h', 
+                                 text='Health %', color='Health %', color_continuous_scale='Greens', range_x=[0, 125])
+                fig_bar.update_traces(texttemplate='%{text}%', textposition='outside', marker_line_color='#064e3b', marker_line_width=1.5)
+                fig_bar.update_layout(yaxis_title=None, xaxis_visible=False, height=400, coloraxis_showscale=False)
+                st.plotly_chart(fig_bar, use_container_width=True)
+
+            with r_col:
+                st.markdown("#### 💎 Asset Valuation by Subsystem")
+                fig_pie = px.pie(df_inv, values=v_col, names=s_col, hole=0.5, color_discrete_sequence=px.colors.qualitative.Prism)
+                fig_pie.update_traces(textinfo='percent+label')
+                st.plotly_chart(fig_pie, use_container_width=True)
 
             st.divider()
 
-            # --- PREVENTIVE MAINTENANCE DASHBOARD ---
-            st.markdown("#### 🛡️ Maintenance & PM Status")
-            p_col1, p_col2 = st.columns([1, 1])
-            with p_col1:
-                if not df_pm.empty:
-                    pm_counts = df_pm.groupby('Category').size().reset_index(name='Count')
-                    fig_pm = px.bar(pm_counts, x='Count', y='Category', orientation='h', title="PM Compliance", color='Count')
-                    st.plotly_chart(fig_pm, use_container_width=True)
-            with p_col2:
-                st.markdown("##### 📅 Upcoming PM Due")
-                if not df_pm.empty:
-                    df_pm['Next Due Date'] = pd.to_datetime(df_pm['Next Due Date'])
-                    upcoming = df_pm[df_pm['Next Due Date'] >= datetime.now()].sort_values('Next Due Date').head(5)
-                    st.dataframe(upcoming[[id_col, 'Activity Type', 'Next Due Date']], hide_index=True, use_container_width=True)
+            # --- RCA ANALYSIS ---
+            st.markdown("#### 🎯 Root Cause Analysis (RCA) - Percentage Breakdown by Category")
+            if not df_maint.empty:
+                rca_data = df_maint.groupby(['Category', 'Failure Cause']).size().reset_index(name='Incidents')
+                cat_totals = df_maint.groupby('Category').size().reset_index(name='Total_Cat_Incidents')
+                rca_final = rca_data.merge(cat_totals, on='Category')
+                rca_final['Cat_Percentage'] = (rca_final['Incidents'] / rca_final['Total_Cat_Incidents'] * 100).round(1)
+
+                fig_rca = px.bar(rca_final, 
+                                 x='Cat_Percentage', y='Category', color='Failure Cause',
+                                 orientation='h',
+                                 text=rca_final.apply(lambda x: f"{x['Failure Cause']}: {x['Cat_Percentage']}%", axis=1),
+                                 title="Root Cause Distribution within Categories",
+                                 color_discrete_sequence=px.colors.qualitative.Pastel)
+                
+                fig_rca.update_traces(textposition='inside')
+                fig_rca.update_layout(
+                    xaxis_title="Percentage of Category Total Failures (%)", 
+                    yaxis_title=None,
+                    height=500,
+                    barmode='stack',
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+                )
+                st.plotly_chart(fig_rca, use_container_width=True)
 
     elif menu == "📝 Add New Asset":
         st.subheader("📝 New Equipment Registration")
@@ -205,50 +231,19 @@ if check_password():
                 inv_ws.append_row([sel_cat, sel_sub, a_code, "Nos", a_qty, a_qty, a_cost, a_qty*a_cost, 10, 0, 0])
                 st.success("Registered!"); st.rerun()
 
-    elif menu == "🛠️ Logs & Maintenance":
-        tab_fail, tab_pm, tab_rem = st.tabs(["⚠️ Failures", "🛡️ PM Activities", "🗑️ Disposal/Removal"])
-        
-        with tab_fail:
-            st.subheader("Failure Logging")
-            l1, l2 = st.columns(2)
-            m_cat = l1.selectbox("Category", list(AAE_STRUCTURE.keys()), key="f_cat")
-            m_sub = l2.selectbox("Subsystem", AAE_STRUCTURE.get(m_cat, []), key="f_sub")
-            with st.form("maint_form", clear_on_submit=True):
-                m_cause = st.selectbox("Root Cause", RCA_STANDARDS.get(m_cat, ["General Issue"]) + ["Wear & Tear", "Vandalism"])
-                m_code = st.text_input("Asset Code")
-                m_tech = st.text_input("Technician")
-                if st.form_submit_button("⚠️ Log Failure"):
-                    maint_ws.append_row([datetime.now().strftime("%Y-%m-%d"), m_cat, m_sub, m_code, m_cause, m_tech])
-                    st.success("Failure Logged!"); st.rerun()
-
-        with tab_pm:
-            st.subheader("PM Activity")
-            p1, p2 = st.columns(2)
-            pm_cat = p1.selectbox("Category", list(AAE_STRUCTURE.keys()), key="pm_cat")
-            pm_sub = p2.selectbox("Subsystem", AAE_STRUCTURE.get(pm_cat, []), key="pm_sub")
-            with st.form("pm_form", clear_on_submit=True):
-                pm_code = st.text_input("Asset Code")
-                pm_type = st.selectbox("Type", ["Monthly", "Quarterly", "Annual", "Calibration"])
-                pm_int = st.select_slider("Months", options=[1, 3, 6, 12])
-                if st.form_submit_button("🛡️ Log PM"):
-                    next_date = (datetime.now() + timedelta(days=pm_int*30)).strftime("%Y-%m-%d")
-                    pm_ws.append_row([datetime.now().strftime("%Y-%m-%d"), pm_cat, pm_sub, pm_code, pm_type, next_date])
-                    st.success(f"PM Logged! Next due: {next_date}"); st.rerun()
-
-        with tab_rem:
-            st.subheader("Asset Removal/Disposal")
-            r1, r2 = st.columns(2)
-            rm_cat = r1.selectbox("Category", list(AAE_STRUCTURE.keys()), key="rm_cat")
-            rm_sub = r2.selectbox("Subsystem", AAE_STRUCTURE.get(rm_cat, []), key="rm_sub")
-            with st.form("remove_form", clear_on_submit=True):
-                rm_code = st.text_input("Asset Code to Remove")
-                rm_reason = st.selectbox("Reason for Removal", ["Beyond Economic Repair", "Technological Obsolescence", "Accidental Damage", "Upgraded/Replaced", "Vandalized"])
-                rm_val = st.number_input("Est. Value at Removal (Br)", min_value=0.0)
-                rm_tech = st.text_input("Authorized By")
-                st.warning("Note: This will log the asset as removed. Ensure you manually remove it from the 'Asset Registry' tab to update active inventory.")
-                if st.form_submit_button("🗑️ Confirm Removal"):
-                    rem_ws.append_row([datetime.now().strftime("%Y-%m-%d"), rm_cat, rm_sub, rm_code, rm_reason, rm_val, rm_tech])
-                    st.success("Asset removal logged!"); st.rerun()
+    elif menu == "🛠️ Failure Logs":
+        st.subheader("🛠️ Technical Incident Logging")
+        l1, l2 = st.columns(2)
+        m_cat = l1.selectbox("Major Category", list(AAE_STRUCTURE.keys()))
+        m_sub = l2.selectbox("Subsystem", AAE_STRUCTURE.get(m_cat, []))
+        with st.form("maint_form", clear_on_submit=True):
+            m_cause = st.selectbox("Root Cause", RCA_STANDARDS.get(m_cat, ["General Issue"]) + ["Wear & Tear", "Vandalism"])
+            m_code = st.text_input("Asset Code")
+            m_tech = st.text_input("Technician Name")
+            if st.form_submit_button("⚠️ Log Incident"):
+                maint_ws.append_row([datetime.now().strftime("%Y-%m-%d"), m_cat, m_sub, m_code, m_cause, m_tech])
+                st.success("Log recorded!"); st.rerun()
+        st.dataframe(df_maint, use_container_width=True, hide_index=True)
 
     elif menu == "🔎 Asset Registry":
         st.subheader("🔎 Master Registry")
@@ -256,6 +251,7 @@ if check_password():
         if st.button("💾 Sync Database"):
             inv_ws.update([edited_df.columns.values.tolist()] + edited_df.values.tolist())
             st.success("Database synced!"); st.rerun()
+
 
 
 
