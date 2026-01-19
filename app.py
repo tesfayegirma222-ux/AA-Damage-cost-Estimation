@@ -58,11 +58,12 @@ if check_password():
         "Illumination System": ["Burnt-out Lamps", "Overheating", "Wiring Issues:", "Overloaded Circuits", "Aging"],
         "Electronic Display System": ["Overheating", "Capacitor Failure", "Improper Cleaning", "environmental condition", "Aging"],
         "Pump System": ["Lack of lubrication", "Cavitation", "Mis alignment", "Dry running", "Loose wiring", "Corrosion", "Aging"],
+        "UPS System": ["Battery aging", "Loose connection", "High temprature", "Load exceeds ups capacity", "Invertor failure", "Human error", "Aging"],
         "General": ["Vandalism", "Physical Accident", "Extreme Weather", "Wear & Tear", "Aging"]
     }
 
     PM_TASKS = {
-        "Electric Power Source": ["Fuel Level Check", "Battery Voltage Test", "Air Filter Change", "Coolant Level Check", "Oil Change", "Generator Load Test"],
+        "Electric Power Source": ["Fuel Level Check", "Battery Voltage Test", "Air Filter Change", "Coolant Level Check", "Oil Change", "Generator Load Test","Cooling system inspection",  "Exhaust system Inspection", "Oil Change" ],
         "Electric Power Distribution": ["Infrared Thermography", "Tightening Terminals", "Breaker Exercise", "Cleaning Busbars", "Transformer Oil Test"],
         "UPS System": ["Battery Discharge Test", "Capacitor Inspection", "Fan Dusting", "Tightening Terminals", "Firmware Check"],
         "CCTV System": ["Lens Cleaning", "Housing Inspection", "Connector Waterproofing", "Storage Integrity Check", "Focus Adjustment"],
@@ -282,6 +283,7 @@ if check_password():
         if st.button("💾 Sync Database"):
             inv_ws.update([edited_df.columns.values.tolist()] + edited_df.values.tolist())
             st.success("Database synced!"); st.rerun()
+
 
 
 
