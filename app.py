@@ -117,12 +117,11 @@ if check_password():
 
     st.set_page_config(page_title="AAE EMA Portal", layout="wide")
     
-    # --- SIDEBAR LOGO ---
-    logo_url = "https://secondary-coral-qeyr04lfdk.edgeone.app/asset.jpg"
-    st.sidebar.image(logo_url, use_container_width=True)
-      # --- SIDEBAR LOGO ---
-    logo_url = "https://civic-plum-k9em9ndfai.edgeone.app/electrical.jpg"
-    st.sidebar.image(logo_url, use_container_width=True)
+    # --- SIDEBAR LOGOS ---
+    logo_url1 = "https://secondary-coral-qeyr04lfdk.edgeone.app/asset.jpg"
+    st.sidebar.image(logo_url1, use_container_width=True)
+    logo_url2 = "https://civic-plum-k9em9ndfai.edgeone.app/electrical.jpg"
+    st.sidebar.image(logo_url2, use_container_width=True)
 
     st.markdown("""
         <style>
@@ -228,12 +227,22 @@ if check_password():
                 else: st.info("No failure logs.")
 
             with col_r2:
+                # --- UPDATED PM CHART: Grouped by Category with Activity Labels ---
                 if not df_prev.empty:
-                    pm_task_data = df_prev.groupby('Task Performed').size().reset_index(name='Total Count')
-                    fig_pm = px.bar(pm_task_data, x='Task Performed', y='Total Count', color='Task Performed',
-                                     text='Total Count', title="PM Frequency by Task Type")
-                    fig_pm.update_traces(textposition='outside')
-                    fig_pm.update_layout(xaxis_title="Type of Activity", yaxis_title="Count", showlegend=False)
+                    pm_data = df_prev.groupby(['Category', 'Task Performed']).size().reset_index(name='Count')
+                    pm_cat_totals = df_prev.groupby('Category').size().reset_index(name='Total_PM')
+                    pm_final = pm_data.merge(pm_cat_totals, on='Category')
+                    
+                    fig_pm = px.bar(pm_final, 
+                                   x='Count', 
+                                   y='Category', 
+                                   color='Task Performed', 
+                                   orientation='h',
+                                   text=pm_final.apply(lambda x: f"{x['Task Performed']} ({x['Count']})", axis=1),
+                                   title="PM Frequency by Category & Activity")
+                    
+                    fig_pm.update_traces(textposition='inside')
+                    fig_pm.update_layout(barmode='stack', showlegend=False, xaxis_title="Total Activities", yaxis_title="Category")
                     st.plotly_chart(fig_pm, use_container_width=True)
                 else: st.info("No PM logs.")
 
@@ -251,7 +260,7 @@ if check_password():
                 st.success("Registered!"); st.rerun()
 
     elif menu == "🛠️ Failure Logs":
-        st.subheader("🛠️ Technical Failurity Logging")
+        st.subheader("🛠️ Technical Failure Logging")
         l1, l2 = st.columns(2)
         m_cat = l1.selectbox("Major Category", list(AAE_STRUCTURE.keys()))
         m_sub = l2.selectbox("Subsystem", AAE_STRUCTURE.get(m_cat, []))
@@ -259,7 +268,7 @@ if check_password():
             m_cause = st.selectbox("Root Cause", RCA_STANDARDS.get(m_cat, ["General Issue"]) + ["Wear & Tear", "Vandalism"])
             m_code = st.text_input("Asset Code")
             m_tech = st.text_input("Technician Name")
-            m_loc = st.selectbox("Location", LOCATIONS)  # Added Location field
+            m_loc = st.selectbox("Location", LOCATIONS)
             if st.form_submit_button("⚠️ Log Incident"):
                 maint_ws.append_row([datetime.now().strftime("%Y-%m-%d"), m_cat, m_sub, m_code, m_cause, m_tech, m_loc])
                 st.success("Log recorded!"); st.rerun()
@@ -274,7 +283,7 @@ if check_password():
             p_code = st.text_input("Asset Code")
             p_task = st.selectbox("Maintenance Task", PM_TASKS.get(p_cat, PM_TASKS["General"]))
             p_stat = st.selectbox("Condition", ["Excellent", "Good", "Needs Repair"])
-            p_loc = st.selectbox("Location", LOCATIONS)  # Added Location field
+            p_loc = st.selectbox("Location", LOCATIONS)
             if st.form_submit_button("✅ Log PM"):
                 prev_ws.append_row([datetime.now().strftime("%Y-%m-%d"), p_cat, p_sub, p_code, p_task, p_stat, p_loc])
                 st.success("PM Logged!"); st.rerun()
@@ -286,6 +295,7 @@ if check_password():
         if st.button("💾 Sync Database"):
             inv_ws.update([edited_df.columns.values.tolist()] + edited_df.values.tolist())
             st.success("Database synced!"); st.rerun()
+
 
 
 
