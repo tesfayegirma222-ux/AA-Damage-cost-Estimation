@@ -18,7 +18,7 @@ def check_password():
             st.session_state["password_correct"] = False
 
     if "password_correct" not in st.session_state:
-        st.markdown("<div style='text-align: center; padding: 20px;'><h2 style='color: #1e3a8a;'>AAE Executive Portal</h2><p>AA Electromechanical Asset Master Database Login</p></div>", unsafe_allow_html=True)
+        st.markdown("<div style='text-align: center; padding: 20px;'><h2 style='color: #1e3a8a;'>AAE Electro Mechanical Asset Executive Portal</h2><p>AAE Electromechanical Asset Master Database Login</p></div>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1,2,1])
         with col2:
             st.text_input("Username", key="username")
@@ -128,7 +128,7 @@ if check_password():
         }
         </style>
         <div class="main-header">
-            <h1 style="margin:0; font-size: 24px;">AAE ELECTROMECHANICAL EXECUTIVE PORTAL</h1>
+            <h1 style="margin:0; font-size: 24px;">AAE Electro Mechanical Asset Executive Portal</h1>
             <p style="margin:0; opacity: 0.9;">Strategic EM Asset Management & PM/RCA Dashboard</p>
         </div>
     """, unsafe_allow_html=True)
@@ -141,7 +141,7 @@ if check_password():
         st.session_state["password_correct"] = False
         st.rerun()
 
-    menu = st.sidebar.radio("Navigation", ["📊 Smart Dashboard", "🔎 Asset Registry", "📝 Add New Asset", "🛠️ Failure Logs", "📅 Preventive Maintenance"])
+    menu = st.sidebar.radio("Navigation", ["📊 Smart Dashboard", "🔎 Asset Registry", "📝 Add New EM Asset", "🛠️ Failure Logs", "📅 Preventive Maintenance"])
 
     if menu == "📊 Smart Dashboard":
         if df_inv.empty:
@@ -233,7 +233,7 @@ if check_password():
                     st.plotly_chart(fig_pm, use_container_width=True)
                 else: st.info("No PM logs.")
 
-    elif menu == "📝 Add New Asset":
+    elif menu == "📝 Add New EM Asset":
         st.subheader("📝 New Equipment Registration")
         c1, c2 = st.columns(2)
         sel_cat = c1.selectbox("Major Category", list(AAE_STRUCTURE.keys()))
@@ -280,6 +280,7 @@ if check_password():
         if st.button("💾 Sync Database"):
             inv_ws.update([edited_df.columns.values.tolist()] + edited_df.values.tolist())
             st.success("Database synced!"); st.rerun()
+
 
 
 
