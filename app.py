@@ -18,7 +18,7 @@ def check_password():
             st.session_state["password_correct"] = False
 
     if "password_correct" not in st.session_state:
-        st.markdown("<div style='text-align: center; padding: 20px;'><h2 style='color: #1e3a8a;'>AAE Electro Mechanical Asset Executive Portal</h2><p>AAE Electromechanical Asset Master Database Login</p></div>", unsafe_allow_html=True)
+        st.markdown("<div style='text-align: center; padding: 20px;'><h2 style='color: #1e3a8a;'>AAE Executive Portal</h2><p>AA Electromechanical Asset Master Database Login</p></div>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1,2,1])
         with col2:
             st.text_input("Username", key="username")
@@ -56,7 +56,6 @@ if check_password():
         "General": ["Vandalism", "Physical Accident", "Extreme Weather", "Wear & Tear"]
     }
 
-    # --- UPDATED: COMMON PM ACTIVITIES BY CATEGORY ---
     PM_TASKS = {
         "Electric Power Source": ["Fuel Level Check", "Battery Voltage Test", "Air Filter Change", "Coolant Level Check", "Oil Change", "Generator Load Test"],
         "Electric Power Distribution": ["Infrared Thermography", "Tightening Terminals", "Breaker Exercise", "Cleaning Busbars", "Transformer Oil Test"],
@@ -71,6 +70,8 @@ if check_password():
         "General": ["Visual Inspection", "Cleaning", "Tightening Connections", "Lubrication", "Functionality Test"]
     }
 
+    LOCATIONS = ["Main Plaza", "Toll Booth A", "Toll Booth B", "Admin Building", "Generator House", "Server Room", "Roadside Section 1", "Roadside Section 2"]
+
     def init_connection():
         scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
         try:
@@ -82,13 +83,13 @@ if check_password():
             
             try: maint = sh.worksheet("Maintenance_Log")
             except:
-                maint = sh.add_worksheet(title="Maintenance_Log", rows="1000", cols="6")
-                maint.append_row(["Date", "Category", "Subsystem", "Asset Code", "Failure Cause", "Technician"])
+                maint = sh.add_worksheet(title="Maintenance_Log", rows="1000", cols="7")
+                maint.append_row(["Date", "Category", "Subsystem", "Asset Code", "Failure Cause", "Technician", "Location"])
             
             try: prev = sh.worksheet("Preventive_Log")
             except:
-                prev = sh.add_worksheet(title="Preventive_Log", rows="1000", cols="6")
-                prev.append_row(["Date", "Category", "Subsystem", "Asset Code", "Task Performed", "Status"])
+                prev = sh.add_worksheet(title="Preventive_Log", rows="1000", cols="7")
+                prev.append_row(["Date", "Category", "Subsystem", "Asset Code", "Task Performed", "Status", "Location"])
             
             return inv, maint, prev
         except Exception as e:
@@ -128,7 +129,7 @@ if check_password():
         }
         </style>
         <div class="main-header">
-            <h1 style="margin:0; font-size: 24px;">AAE Electro Mechanical Asset Executive Portal</h1>
+            <h1 style="margin:0; font-size: 24px;">AAE ELECTROMECHANICAL EXECUTIVE PORTAL</h1>
             <p style="margin:0; opacity: 0.9;">Strategic EM Asset Management & PM/RCA Dashboard</p>
         </div>
     """, unsafe_allow_html=True)
@@ -141,7 +142,7 @@ if check_password():
         st.session_state["password_correct"] = False
         st.rerun()
 
-    menu = st.sidebar.radio("Navigation", ["📊 Smart Dashboard", "🔎 Asset Registry", "📝 Add New EM Asset", "🛠️ Failure Logs", "📅 Preventive Maintenance"])
+    menu = st.sidebar.radio("Navigation", ["📊 Smart Dashboard", "🔎 Asset Registry", "📝 Add New Asset", "🛠️ Failure Logs", "📅 Preventive Maintenance"])
 
     if menu == "📊 Smart Dashboard":
         if df_inv.empty:
@@ -151,13 +152,11 @@ if check_password():
             s_col, id_col = df_inv.columns[1], df_inv.columns[2]
             life_col, used_col = df_inv.columns[8], df_inv.columns[9]
             
-            # --- PORTFOLIO VALUE FORMATTING ---
             total_val = df_inv[v_col].sum()
             if total_val >= 1_000_000: display_val = f"{total_val/1_000_000:.2f}M Br"
             elif total_val >= 1_000: display_val = f"{total_val/1_000:.1f}K Br"
             else: display_val = f"{total_val:,.0f} Br"
 
-            # --- KPI ROW ---
             k1, k2, k3, k4, k5 = st.columns(5)
             k1.metric("💰 Portfolio Value", display_val, help=f"Exact Value: {total_val:,.2f} Br")
             k2.metric("📦 Active Assets", int(df_inv[q_col].sum()))
@@ -168,7 +167,6 @@ if check_password():
 
             st.divider()
 
-            # --- LIFE-AGE & REPLACEMENT WATCHLIST ---
             st.markdown("#### ⏳ Asset Life-Age & Sustainability Analysis")
             col_age1, col_age2 = st.columns([6, 4])
             df_inv['Remaining %'] = ((df_inv[life_col] - df_inv[used_col]) / df_inv[life_col] * 100).clip(0, 100).fillna(0).round(1)
@@ -190,7 +188,6 @@ if check_password():
 
             st.divider()
 
-            # --- HEALTH & VALUATION ---
             col_h1, col_h2 = st.columns(2)
             with col_h1:
                 st.markdown("#### ⚡ System Health")
@@ -206,7 +203,6 @@ if check_password():
 
             st.divider()
 
-            # --- RCA & PM FREQUENCY (By Task Type) ---
             st.markdown("#### 🎯 Root Cause Analysis (RCA) & Maintenance Breakdown")
             col_r1, col_r2 = st.columns(2)
             with col_r1:
@@ -224,16 +220,15 @@ if check_password():
 
             with col_r2:
                 if not df_prev.empty:
-                    # PM Frequency by Task Type (Vertical Bar)
                     pm_task_data = df_prev.groupby('Task Performed').size().reset_index(name='Total Count')
                     fig_pm = px.bar(pm_task_data, x='Task Performed', y='Total Count', color='Task Performed',
                                      text='Total Count', title="PM Frequency by Task Type")
                     fig_pm.update_traces(textposition='outside')
-                    fig_pm.update_layout(xaxis_title="Type of Preventive Maintenance Activity", yaxis_title="Number of Tasks", showlegend=False)
+                    fig_pm.update_layout(xaxis_title="Type of Activity", yaxis_title="Count", showlegend=False)
                     st.plotly_chart(fig_pm, use_container_width=True)
                 else: st.info("No PM logs.")
 
-    elif menu == "📝 Add New EM Asset":
+    elif menu == "📝 Add New Asset":
         st.subheader("📝 New Equipment Registration")
         c1, c2 = st.columns(2)
         sel_cat = c1.selectbox("Major Category", list(AAE_STRUCTURE.keys()))
@@ -255,8 +250,9 @@ if check_password():
             m_cause = st.selectbox("Root Cause", RCA_STANDARDS.get(m_cat, ["General Issue"]) + ["Wear & Tear", "Vandalism"])
             m_code = st.text_input("Asset Code")
             m_tech = st.text_input("Technician Name")
+            m_loc = st.selectbox("Location", LOCATIONS)  # Added Location field
             if st.form_submit_button("⚠️ Log Incident"):
-                maint_ws.append_row([datetime.now().strftime("%Y-%m-%d"), m_cat, m_sub, m_code, m_cause, m_tech])
+                maint_ws.append_row([datetime.now().strftime("%Y-%m-%d"), m_cat, m_sub, m_code, m_cause, m_tech, m_loc])
                 st.success("Log recorded!"); st.rerun()
         st.dataframe(df_maint, use_container_width=True, hide_index=True)
 
@@ -269,8 +265,9 @@ if check_password():
             p_code = st.text_input("Asset Code")
             p_task = st.selectbox("Maintenance Task", PM_TASKS.get(p_cat, PM_TASKS["General"]))
             p_stat = st.selectbox("Condition", ["Excellent", "Good", "Needs Repair"])
+            p_loc = st.selectbox("Location", LOCATIONS)  # Added Location field
             if st.form_submit_button("✅ Log PM"):
-                prev_ws.append_row([datetime.now().strftime("%Y-%m-%d"), p_cat, p_sub, p_code, p_task, p_stat])
+                prev_ws.append_row([datetime.now().strftime("%Y-%m-%d"), p_cat, p_sub, p_code, p_task, p_stat, p_loc])
                 st.success("PM Logged!"); st.rerun()
         st.dataframe(df_prev, use_container_width=True, hide_index=True)
 
@@ -280,6 +277,7 @@ if check_password():
         if st.button("💾 Sync Database"):
             inv_ws.update([edited_df.columns.values.tolist()] + edited_df.values.tolist())
             st.success("Database synced!"); st.rerun()
+
 
 
 
