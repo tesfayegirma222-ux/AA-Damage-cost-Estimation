@@ -56,7 +56,6 @@ if check_password():
         "General": ["Vandalism", "Physical Accident", "Extreme Weather", "Wear & Tear"]
     }
 
-    # PM Activities 
     PM_TASKS = {
         "Electric Power Source": ["Fuel Level Check", "Battery Voltage Test", "Air Filter Change", "Coolant Level Check"],
         "CCTV System": ["Lens Cleaning", "Housing Inspection", "Connector Waterproofing", "Storage Integrity Check"],
@@ -71,24 +70,18 @@ if check_password():
             creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
             client = gspread.authorize(creds)
             sh = client.open_by_url(st.secrets["SHEET_URL"])
-            
-            # Inventory Sheet
             inv = sh.worksheet("Sheet1")
             
-            # Failure Sheet
-            try:
-                maint = sh.worksheet("Maintenance_Log")
+            try: maint = sh.worksheet("Maintenance_Log")
             except:
                 maint = sh.add_worksheet(title="Maintenance_Log", rows="1000", cols="6")
                 maint.append_row(["Date", "Category", "Subsystem", "Asset Code", "Failure Cause", "Technician"])
             
-            # Preventive Sheet (New Module)
-            try:
-                prev = sh.worksheet("Preventive_Log")
+            try: prev = sh.worksheet("Preventive_Log")
             except:
                 prev = sh.add_worksheet(title="Preventive_Log", rows="1000", cols="6")
                 prev.append_row(["Date", "Category", "Subsystem", "Asset Code", "Task Performed", "Status"])
-                
+            
             return inv, maint, prev
         except Exception as e:
             st.error(f"Connection Error: {e}")
@@ -140,87 +133,68 @@ if check_password():
 
     if menu == "📊 Smart Dashboard":
         if df_inv.empty:
-            st.info("Inventory is empty. Please register assets.")
+            st.info("Inventory is empty.")
         else:
             v_col, q_col, f_col, c_col = df_inv.columns[7], df_inv.columns[4], df_inv.columns[5], df_inv.columns[0]
-            s_col = df_inv.columns[1]
-            id_col = df_inv.columns[2] 
+            s_col, id_col = df_inv.columns[1], df_inv.columns[2]
             life_col, used_col = df_inv.columns[8], df_inv.columns[9]
             
+            # --- TOP METRICS ---
             k1, k2, k3, k4 = st.columns(4)
             k1.metric("💰 Portfolio Value", f"{df_inv[v_col].sum():,.0f} Br")
             k2.metric("📦 Active Assets", int(df_inv[q_col].sum()))
-            
-            health = (df_inv[f_col].sum() / df_inv[q_col].sum() * 100) if df_inv[q_col].sum() > 0 else 0
-            k3.metric("🏥 Health Index", f"{health:.1f}%")
-            
-            pm_count = len(df_prev) if not df_prev.empty else 0
-            k4.metric("📅 PM Activities", pm_count)
+            health_idx = (df_inv[f_col].sum() / df_inv[q_col].sum() * 100) if df_inv[q_col].sum() > 0 else 0
+            k3.metric("🏥 Health Index", f"{health_idx:.1f}%")
+            k4.metric("📅 PM Activities", len(df_prev) if not df_prev.empty else 0)
 
             st.divider()
 
-            # --- PREVENTIVE ANALYSIS (New Section) ---
-            st.markdown("#### 📅 Preventive Maintenance (PM) Analysis")
-            if not df_prev.empty:
-                col_p1, col_p2 = st.columns(2)
-                with col_p1:
-                    pm_summary = df_prev.groupby('Category').size().reset_index(name='PM Count')
-                    fig_pm = px.bar(pm_summary, x='Category', y='PM Count', color='PM Count', 
-                                    title="Maintenance Frequency by Category", color_continuous_scale='Blues')
-                    st.plotly_chart(fig_pm, use_container_width=True)
-                with col_p2:
-                    df_prev['Date'] = pd.to_datetime(df_prev['Date'])
-                    pm_trend = df_prev.groupby(df_prev['Date'].dt.date).size().reset_index(name='Daily Tasks')
-                    fig_trend = px.line(pm_trend, x='Date', y='Daily Tasks', title="PM Activity Trend")
-                    st.plotly_chart(fig_trend, use_container_width=True)
-            else:
-                st.warning("No Preventive Maintenance data recorded yet.")
-
-            st.divider()
-
-            # --- LIFE-AGE ANALYSIS ---
+            # --- LIFE-AGE & WATCHLIST ---
             st.markdown("#### ⏳ Asset Life-Age & Sustainability Analysis")
             col_age1, col_age2 = st.columns([6, 4])
             df_inv['Remaining %'] = ((df_inv[life_col] - df_inv[used_col]) / df_inv[life_col] * 100).clip(0, 100).fillna(0)
-            
             with col_age1:
-                fig_age = px.scatter(df_inv, x=used_col, y='Remaining %', size=v_col, color=s_col,
-                                     hover_name=id_col, 
-                                     labels={used_col: "Years in Service", 'Remaining %': "Remaining Useful Life (%)", s_col: "Subsystem"},
-                                     title="Asset Replacement Matrix")
-                fig_age.add_hline(y=20, line_dash="dot", line_color="red", annotation_text="Critical Zone")
+                fig_age = px.scatter(df_inv, x=used_col, y='Remaining %', size=v_col, color=s_col, hover_name=id_col, title="Asset Replacement Matrix")
+                fig_age.add_hline(y=20, line_dash="dot", line_color="red")
                 st.plotly_chart(fig_age, use_container_width=True)
-
             with col_age2:
                 st.markdown("##### ⚠️ Replacement Watchlist")
                 critical_df = df_inv[df_inv['Remaining %'] <= 20][[id_col, s_col, 'Remaining %']]
-                warning_df = df_inv[(df_inv['Remaining %'] > 20) & (df_inv['Remaining %'] <= 40)][[id_col, s_col, 'Remaining %']]
-                
-                tab1, tab2 = st.tabs(["🔴 Critical (<20%)", "🟡 Warning (20-40%)"])
-                with tab1:
-                    if not critical_df.empty:
-                        st.dataframe(critical_df.sort_values('Remaining %'), hide_index=True, use_container_width=True)
-                    else: st.success("No assets in critical zone.")
-                with tab2:
-                    if not warning_df.empty:
-                        st.dataframe(warning_df.sort_values('Remaining %'), hide_index=True, use_container_width=True)
-                    else: st.info("No assets in warning zone.")
+                st.dataframe(critical_df.sort_values('Remaining %'), hide_index=True, use_container_width=True)
 
             st.divider()
 
-            # --- RCA ANALYSIS ---
-            st.markdown("#### 🎯 Root Cause Analysis (RCA)")
-            if not df_maint.empty:
-                rca_data = df_maint.groupby(['Category', 'Failure Cause']).size().reset_index(name='Incidents')
-                cat_totals = df_maint.groupby('Category').size().reset_index(name='Total_Cat_Incidents')
-                rca_final = rca_data.merge(cat_totals, on='Category')
-                rca_final['Cat_Percentage'] = (rca_final['Incidents'] / rca_final['Total_Cat_Incidents'] * 100).round(1)
+            # --- RESTORED HEALTH & VALUATION ---
+            col_h1, col_h2 = st.columns(2)
+            with col_h1:
+                st.markdown("#### ⚡ System Health (Functional %)")
+                h_df = df_inv.groupby(c_col).agg({q_col: 'sum', f_col: 'sum'}).reset_index()
+                h_df['Health %'] = (h_df[f_col] / h_df[q_col] * 100).round(1).fillna(0)
+                fig_bar = px.bar(h_df.sort_values('Health %'), x='Health %', y=c_col, orientation='h', 
+                                 text='Health %', color='Health %', color_continuous_scale='Greens')
+                st.plotly_chart(fig_bar, use_container_width=True)
+            with col_h2:
+                st.markdown("#### 💎 Asset Valuation by Subsystem")
+                fig_pie = px.pie(df_inv, values=v_col, names=s_col, hole=0.5)
+                st.plotly_chart(fig_pie, use_container_width=True)
 
-                fig_rca = px.bar(rca_final, x='Cat_Percentage', y='Category', color='Failure Cause', orientation='h',
-                                 text=rca_final.apply(lambda x: f"{x['Failure Cause']}: {x['Cat_Percentage']}%", axis=1),
-                                 title="Root Cause Distribution within Categories")
-                fig_rca.update_layout(barmode='stack', height=450)
-                st.plotly_chart(fig_rca, use_container_width=True)
+            st.divider()
+
+            # --- PREVENTIVE & RCA ---
+            st.markdown("#### 🛠️ Maintenance & RCA Breakdown")
+            col_m1, col_m2 = st.columns(2)
+            with col_m1:
+                if not df_prev.empty:
+                    pm_sum = df_prev.groupby('Category').size().reset_index(name='PM Count')
+                    fig_pm = px.bar(pm_sum, x='Category', y='PM Count', title="PM Frequency")
+                    st.plotly_chart(fig_pm, use_container_width=True)
+                else: st.info("No PM logs yet.")
+            with col_m2:
+                if not df_maint.empty:
+                    rca_data = df_maint.groupby(['Category', 'Failure Cause']).size().reset_index(name='Incidents')
+                    fig_rca = px.bar(rca_data, x='Incidents', y='Category', color='Failure Cause', orientation='h', title="Root Cause Analysis")
+                    st.plotly_chart(fig_rca, use_container_width=True)
+                else: st.info("No failure logs yet.")
 
     elif menu == "📝 Add New Asset":
         st.subheader("📝 New Equipment Registration")
@@ -236,7 +210,7 @@ if check_password():
                 st.success("Registered!"); st.rerun()
 
     elif menu == "🛠️ Failure Logs":
-        st.subheader("🛠️ Technical Incident Logging (Corrective Maintenance)")
+        st.subheader("🛠️ Technical Incident Logging")
         l1, l2 = st.columns(2)
         m_cat = l1.selectbox("Major Category", list(AAE_STRUCTURE.keys()))
         m_sub = l2.selectbox("Subsystem", AAE_STRUCTURE.get(m_cat, []))
@@ -250,20 +224,17 @@ if check_password():
         st.dataframe(df_maint, use_container_width=True, hide_index=True)
 
     elif menu == "📅 Preventive Maintenance":
-        st.subheader("📅 Scheduled Preventive Activity Logging")
+        st.subheader("📅 Preventive Activity Logging")
         p1, p2 = st.columns(2)
         p_cat = p1.selectbox("Category", list(AAE_STRUCTURE.keys()))
         p_sub = p2.selectbox("Subsystem", AAE_STRUCTURE.get(p_cat, []))
-        
         with st.form("preventive_form", clear_on_submit=True):
-            p_code = st.text_input("Asset Code (Tag)")
+            p_code = st.text_input("Asset Code")
             p_task = st.selectbox("Maintenance Task", PM_TASKS.get(p_cat, PM_TASKS["General"]))
-            p_stat = st.selectbox("Condition After Service", ["Excellent", "Good", "Requires Repair", "Needs Replacement"])
-            if st.form_submit_button("✅ Log PM Activity"):
+            p_stat = st.selectbox("Condition", ["Excellent", "Good", "Needs Repair"])
+            if st.form_submit_button("✅ Log PM"):
                 prev_ws.append_row([datetime.now().strftime("%Y-%m-%d"), p_cat, p_sub, p_code, p_task, p_stat])
-                st.success("Preventive Maintenance Logged!"); st.rerun()
-        
-        st.markdown("### Recent PM Logs")
+                st.success("PM Logged!"); st.rerun()
         st.dataframe(df_prev, use_container_width=True, hide_index=True)
 
     elif menu == "🔎 Asset Registry":
@@ -272,6 +243,7 @@ if check_password():
         if st.button("💾 Sync Database"):
             inv_ws.update([edited_df.columns.values.tolist()] + edited_df.values.tolist())
             st.success("Database synced!"); st.rerun()
+
 
 
 
