@@ -56,11 +56,19 @@ if check_password():
         "General": ["Vandalism", "Physical Accident", "Extreme Weather", "Wear & Tear"]
     }
 
+    # --- UPDATED: COMMON PM ACTIVITIES BY CATEGORY ---
     PM_TASKS = {
-        "Electric Power Source": ["Fuel Level Check", "Battery Voltage Test", "Air Filter Change", "Coolant Level Check"],
-        "CCTV System": ["Lens Cleaning", "Housing Inspection", "Connector Waterproofing", "Storage Integrity Check"],
-        "UPS System": ["Battery Discharge Test", "Fan Dusting", "Tightening Terminals"],
-        "General": ["Visual Inspection", "Cleaning", "Tightening Connections", "Lubrication"]
+        "Electric Power Source": ["Fuel Level Check", "Battery Voltage Test", "Air Filter Change", "Coolant Level Check", "Oil Change", "Generator Load Test"],
+        "Electric Power Distribution": ["Infrared Thermography", "Tightening Terminals", "Breaker Exercise", "Cleaning Busbars", "Transformer Oil Test"],
+        "UPS System": ["Battery Discharge Test", "Capacitor Inspection", "Fan Dusting", "Tightening Terminals", "Firmware Check"],
+        "CCTV System": ["Lens Cleaning", "Housing Inspection", "Connector Waterproofing", "Storage Integrity Check", "Focus Adjustment"],
+        "Auto-Railing System": ["Motor Lubrication", "Controller Syncing", "Loop Sensitivity Test", "Spring Tension Adjustment", "Limit Switch Test"],
+        "HVAC System": ["Filter Replacement", "Condenser Cleaning", "Refrigerant Leak Test", "Thermostat Calibration", "Drain Line Flush"],
+        "Illumination System": ["Lamp Replacement", "Photocell Test", "Timer Calibration", "Wiring Insulation Test", "Fixture Cleaning"],
+        "Electronic Display System": ["Pixel Test", "Cooling Fan Check", "Brightness Calibration", "Data Cable Inspection", "Enclosure Sealing"],
+        "Pump System": ["Mechanical Seal Check", "Bearing Lubrication", "Impeller Inspection", "Pressure Gauge Calibration", "Valve Exercise"],
+        "Overload System (WIM)": ["Sensor Calibration", "Loop Resistance Test", "Drainage Cleaning", "Junction Box Sealing"],
+        "General": ["Visual Inspection", "Cleaning", "Tightening Connections", "Lubrication", "Functionality Test"]
     }
 
     def init_connection():
@@ -198,7 +206,7 @@ if check_password():
 
             st.divider()
 
-            # --- RCA & UPDATED PM FREQUENCY (By Task Type) ---
+            # --- RCA & PM FREQUENCY (By Task Type) ---
             st.markdown("#### 🎯 Root Cause Analysis (RCA) & Maintenance Breakdown")
             col_r1, col_r2 = st.columns(2)
             with col_r1:
@@ -216,12 +224,12 @@ if check_password():
 
             with col_r2:
                 if not df_prev.empty:
-                    # NEW: PM Frequency by Task Performed (Vertical Bar)
+                    # PM Frequency by Task Type (Vertical Bar)
                     pm_task_data = df_prev.groupby('Task Performed').size().reset_index(name='Total Count')
                     fig_pm = px.bar(pm_task_data, x='Task Performed', y='Total Count', color='Task Performed',
-                                     text='Total Count', title="PM Frequency by Maintenance Task Type")
+                                     text='Total Count', title="PM Frequency by Task Type")
                     fig_pm.update_traces(textposition='outside')
-                    fig_pm.update_layout(xaxis_title="Type of Maintenance Performed", yaxis_title="Total Events", showlegend=False)
+                    fig_pm.update_layout(xaxis_title="Type of Preventive Maintenance Activity", yaxis_title="Number of Tasks", showlegend=False)
                     st.plotly_chart(fig_pm, use_container_width=True)
                 else: st.info("No PM logs.")
 
@@ -272,6 +280,7 @@ if check_password():
         if st.button("💾 Sync Database"):
             inv_ws.update([edited_df.columns.values.tolist()] + edited_df.values.tolist())
             st.success("Database synced!"); st.rerun()
+
 
 
 
