@@ -102,7 +102,8 @@ if check_password():
 
     st.set_page_config(page_title="AAE EMA Portal", layout="wide")
     
-    # --- RESTORED SIDEBAR LOGO ---
+    # --- LOGO SECTION ---
+    # Using the provided image URL in the sidebar
     logo_url = "https://skilled-sapphire-ragpx5z8le.edgeone.app/images.jpg"
     st.sidebar.image(logo_url, use_container_width=True)
 
@@ -152,7 +153,6 @@ if check_password():
 
             st.divider()
 
-            # --- LIFE-AGE ---
             st.markdown("#### ⏳ Asset Life-Age & Sustainability Analysis")
             col_age1, col_age2 = st.columns([6, 4])
             df_inv['Remaining %'] = ((df_inv[life_col] - df_inv[used_col]) / df_inv[life_col] * 100).clip(0, 100).fillna(0)
@@ -167,7 +167,6 @@ if check_password():
 
             st.divider()
 
-            # --- HEALTH & VALUATION ---
             col_h1, col_h2 = st.columns(2)
             with col_h1:
                 st.markdown("#### ⚡ System Health")
@@ -184,7 +183,6 @@ if check_password():
 
             st.divider()
 
-            # --- LABELED RCA & PM TREND ---
             st.markdown("#### 🎯 Root Cause Analysis (RCA) & Maintenance Breakdown")
             col_r1, col_r2 = st.columns(2)
             with col_r1:
@@ -257,6 +255,7 @@ if check_password():
         if st.button("💾 Sync Database"):
             inv_ws.update([edited_df.columns.values.tolist()] + edited_df.values.tolist())
             st.success("Database synced!"); st.rerun()
+
 
 
 
