@@ -145,12 +145,9 @@ if check_password():
             
             # --- PORTFOLIO VALUE FORMATTING ---
             total_val = df_inv[v_col].sum()
-            if total_val >= 1_000_000:
-                display_val = f"{total_val/1_000_000:.2f}M Br"
-            elif total_val >= 1_000:
-                display_val = f"{total_val/1_000:.1f}K Br"
-            else:
-                display_val = f"{total_val:,.0f} Br"
+            if total_val >= 1_000_000: display_val = f"{total_val/1_000_000:.2f}M Br"
+            elif total_val >= 1_000: display_val = f"{total_val/1_000:.1f}K Br"
+            else: display_val = f"{total_val:,.0f} Br"
 
             # --- KPI ROW ---
             k1, k2, k3, k4, k5 = st.columns(5)
@@ -167,12 +164,10 @@ if check_password():
             st.markdown("#### ⏳ Asset Life-Age & Sustainability Analysis")
             col_age1, col_age2 = st.columns([6, 4])
             df_inv['Remaining %'] = ((df_inv[life_col] - df_inv[used_col]) / df_inv[life_col] * 100).clip(0, 100).fillna(0).round(1)
-            
             with col_age1:
                 fig_age = px.scatter(df_inv, x=used_col, y='Remaining %', size=v_col, color=s_col, hover_name=id_col, title="Asset Replacement Matrix")
                 fig_age.add_hline(y=20, line_dash="dot", line_color="red")
                 st.plotly_chart(fig_age, use_container_width=True)
-                
             with col_age2:
                 st.markdown("##### ⚠️ Replacement Watchlist")
                 critical_df = df_inv[df_inv['Remaining %'] <= 20][[id_col, s_col, 'Remaining %']]
@@ -193,8 +188,7 @@ if check_password():
                 st.markdown("#### ⚡ System Health")
                 h_df = df_inv.groupby(c_col).agg({q_col: 'sum', f_col: 'sum'}).reset_index()
                 h_df['Health %'] = (h_df[f_col] / h_df[q_col] * 100).round(1).fillna(0)
-                fig_bar = px.bar(h_df.sort_values('Health %'), x='Health %', y=c_col, orientation='h', 
-                                 text='Health %', color='Health %', color_continuous_scale='Greens')
+                fig_bar = px.bar(h_df.sort_values('Health %'), x='Health %', y=c_col, orientation='h', text='Health %', color='Health %', color_continuous_scale='Greens')
                 fig_bar.update_traces(texttemplate='%{text}%', textposition='outside')
                 st.plotly_chart(fig_bar, use_container_width=True)
             with col_h2:
@@ -204,7 +198,7 @@ if check_password():
 
             st.divider()
 
-            # --- LABELED RCA & PM TREND ---
+            # --- RCA & UPDATED PM FREQUENCY (By Task Type) ---
             st.markdown("#### 🎯 Root Cause Analysis (RCA) & Maintenance Breakdown")
             col_r1, col_r2 = st.columns(2)
             with col_r1:
@@ -214,8 +208,7 @@ if check_password():
                     rca_final = rca_data.merge(cat_totals, on='Category')
                     rca_final['%'] = (rca_final['Incidents'] / rca_final['Total_Cat'] * 100).round(1)
                     fig_rca = px.bar(rca_final, x='Incidents', y='Category', color='Failure Cause', orientation='h',
-                                     text=rca_final.apply(lambda x: f"{x['Failure Cause']} ({x['%']}%)", axis=1),
-                                     title="Incident Root Causes")
+                                     text=rca_final.apply(lambda x: f"{x['Failure Cause']} ({x['%']}%)", axis=1), title="Incident Root Causes")
                     fig_rca.update_traces(textposition='inside')
                     fig_rca.update_layout(barmode='stack', showlegend=False)
                     st.plotly_chart(fig_rca, use_container_width=True)
@@ -223,9 +216,12 @@ if check_password():
 
             with col_r2:
                 if not df_prev.empty:
-                    pm_sum = df_prev.groupby('Category').size().reset_index(name='Count')
-                    fig_pm = px.bar(pm_sum, x='Category', y='Count', title="PM Frequency", text='Count')
+                    # NEW: PM Frequency by Task Performed (Vertical Bar)
+                    pm_task_data = df_prev.groupby('Task Performed').size().reset_index(name='Total Count')
+                    fig_pm = px.bar(pm_task_data, x='Task Performed', y='Total Count', color='Task Performed',
+                                     text='Total Count', title="PM Frequency by Maintenance Task Type")
                     fig_pm.update_traces(textposition='outside')
+                    fig_pm.update_layout(xaxis_title="Type of Maintenance Performed", yaxis_title="Total Events", showlegend=False)
                     st.plotly_chart(fig_pm, use_container_width=True)
                 else: st.info("No PM logs.")
 
@@ -276,6 +272,7 @@ if check_password():
         if st.button("💾 Sync Database"):
             inv_ws.update([edited_df.columns.values.tolist()] + edited_df.values.tolist())
             st.success("Database synced!"); st.rerun()
+
 
 
 
