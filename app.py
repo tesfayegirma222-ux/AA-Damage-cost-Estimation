@@ -248,7 +248,7 @@ if check_password():
                 st.success("Registered!"); st.rerun()
 
     elif menu == "🛠️ Failure Logs":
-        st.subheader("🛠️ Technical Incident Logging")
+        st.subheader("🛠️ Technical Failurity Logging")
         l1, l2 = st.columns(2)
         m_cat = l1.selectbox("Major Category", list(AAE_STRUCTURE.keys()))
         m_sub = l2.selectbox("Subsystem", AAE_STRUCTURE.get(m_cat, []))
@@ -283,6 +283,7 @@ if check_password():
         if st.button("💾 Sync Database"):
             inv_ws.update([edited_df.columns.values.tolist()] + edited_df.values.tolist())
             st.success("Database synced!"); st.rerun()
+
 
 
 
