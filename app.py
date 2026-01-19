@@ -102,8 +102,7 @@ if check_password():
 
     st.set_page_config(page_title="AAE EMA Portal", layout="wide")
     
-    # --- LOGO SECTION ---
-    # Using the provided image URL in the sidebar
+    # --- SIDEBAR LOGO ---
     logo_url = "https://skilled-sapphire-ragpx5z8le.edgeone.app/images.jpg"
     st.sidebar.image(logo_url, use_container_width=True)
 
@@ -144,29 +143,42 @@ if check_password():
             s_col, id_col = df_inv.columns[1], df_inv.columns[2]
             life_col, used_col = df_inv.columns[8], df_inv.columns[9]
             
-            k1, k2, k3, k4 = st.columns(4)
+            # --- UPDATED KPI ROW (Added Maintenance Log Count) ---
+            k1, k2, k3, k4, k5 = st.columns(5)
             k1.metric("💰 Portfolio Value", f"{df_inv[v_col].sum():,.0f} Br")
             k2.metric("📦 Active Assets", int(df_inv[q_col].sum()))
             health_idx = (df_inv[f_col].sum() / df_inv[q_col].sum() * 100) if df_inv[q_col].sum() > 0 else 0
             k3.metric("🏥 Health Index", f"{health_idx:.1f}%")
-            k4.metric("📅 PM Activities", len(df_prev) if not df_prev.empty else 0)
+            k4.metric("🛠️ Failures Logged", len(df_maint) if not df_maint.empty else 0)
+            k5.metric("📅 PM Activities", len(df_prev) if not df_prev.empty else 0)
 
             st.divider()
 
+            # --- LIFE-AGE & REPLACEMENT WATCHLIST ---
             st.markdown("#### ⏳ Asset Life-Age & Sustainability Analysis")
             col_age1, col_age2 = st.columns([6, 4])
-            df_inv['Remaining %'] = ((df_inv[life_col] - df_inv[used_col]) / df_inv[life_col] * 100).clip(0, 100).fillna(0)
+            df_inv['Remaining %'] = ((df_inv[life_col] - df_inv[used_col]) / df_inv[life_col] * 100).clip(0, 100).fillna(0).round(1)
+            
             with col_age1:
                 fig_age = px.scatter(df_inv, x=used_col, y='Remaining %', size=v_col, color=s_col, hover_name=id_col, title="Asset Replacement Matrix")
                 fig_age.add_hline(y=20, line_dash="dot", line_color="red")
                 st.plotly_chart(fig_age, use_container_width=True)
+                
             with col_age2:
                 st.markdown("##### ⚠️ Replacement Watchlist")
                 critical_df = df_inv[df_inv['Remaining %'] <= 20][[id_col, s_col, 'Remaining %']]
-                st.dataframe(critical_df.sort_values('Remaining %'), hide_index=True, use_container_width=True)
+                warning_df = df_inv[(df_inv['Remaining %'] > 20) & (df_inv['Remaining %'] <= 40)][[id_col, s_col, 'Remaining %']]
+                tab1, tab2 = st.tabs(["🔴 Critical (<20%)", "🟡 Warning (20-40%)"])
+                with tab1:
+                    if not critical_df.empty: st.dataframe(critical_df.sort_values('Remaining %'), hide_index=True, use_container_width=True)
+                    else: st.success("No assets in critical zone.")
+                with tab2:
+                    if not warning_df.empty: st.dataframe(warning_df.sort_values('Remaining %'), hide_index=True, use_container_width=True)
+                    else: st.info("No assets in warning zone.")
 
             st.divider()
 
+            # --- HEALTH & VALUATION ---
             col_h1, col_h2 = st.columns(2)
             with col_h1:
                 st.markdown("#### ⚡ System Health")
@@ -183,6 +195,7 @@ if check_password():
 
             st.divider()
 
+            # --- LABELED RCA & PM TREND ---
             st.markdown("#### 🎯 Root Cause Analysis (RCA) & Maintenance Breakdown")
             col_r1, col_r2 = st.columns(2)
             with col_r1:
@@ -191,7 +204,6 @@ if check_password():
                     cat_totals = df_maint.groupby('Category').size().reset_index(name='Total_Cat')
                     rca_final = rca_data.merge(cat_totals, on='Category')
                     rca_final['%'] = (rca_final['Incidents'] / rca_final['Total_Cat'] * 100).round(1)
-                    
                     fig_rca = px.bar(rca_final, x='Incidents', y='Category', color='Failure Cause', orientation='h',
                                      text=rca_final.apply(lambda x: f"{x['Failure Cause']} ({x['%']}%)", axis=1),
                                      title="Incident Root Causes")
@@ -255,6 +267,7 @@ if check_password():
         if st.button("💾 Sync Database"):
             inv_ws.update([edited_df.columns.values.tolist()] + edited_df.values.tolist())
             st.success("Database synced!"); st.rerun()
+
 
 
 
