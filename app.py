@@ -202,8 +202,10 @@ if check_password():
                 st.markdown("#### ⚡ System Health")
                 h_df = df_inv.groupby(c_col).agg({q_col: 'sum', f_col: 'sum'}).reset_index()
                 h_df['Health %'] = (h_df[f_col] / h_df[q_col] * 100).round(1).fillna(0)
-                fig_bar = px.bar(h_df.sort_values('Health %'), x='Health %', y=c_col, orientation='h', text='Health %', color='Health %', color_continuous_scale='Greens')
+                # UPDATED: color=c_col gives each category bar its own distinct color
+                fig_bar = px.bar(h_df.sort_values('Health %'), x='Health %', y=c_col, orientation='h', text='Health %', color=c_col)
                 fig_bar.update_traces(texttemplate='%{text}%', textposition='outside')
+                fig_bar.update_layout(showlegend=False)
                 st.plotly_chart(fig_bar, use_container_width=True)
             with col_h2:
                 st.markdown("#### 💎 Valuation by Subsystem")
@@ -296,6 +298,7 @@ if check_password():
         if st.button("💾 Sync Database"):
             inv_ws.update([edited_df.columns.values.tolist()] + edited_df.values.tolist())
             st.success("Database synced!"); st.rerun()
+
 
 
 
