@@ -10,7 +10,7 @@ def check_password():
     def password_entered():
         user = st.session_state.get("username")
         pwd = st.session_state.get("password")
-        if user == "admin" and pwd == "aae123":
+        if user == "admin" and pwd == "password":
             st.session_state["password_correct"] = True
             if "password" in st.session_state: del st.session_state["password"]
             if "username" in st.session_state: del st.session_state["username"]
@@ -296,6 +296,7 @@ if check_password():
         if st.button("💾 Sync Database"):
             inv_ws.update([edited_df.columns.values.tolist()] + edited_df.values.tolist())
             st.success("Database synced!"); st.rerun()
+
 
 
 
