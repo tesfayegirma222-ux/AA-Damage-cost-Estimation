@@ -10,7 +10,7 @@ def check_password():
     def password_entered():
         user = st.session_state.get("username")
         pwd = st.session_state.get("password")
-        if user == "admin" and pwd == "password":
+        if user == "admin" and pwd == "password123":
             st.session_state["password_correct"] = True
             if "password" in st.session_state: del st.session_state["password"]
             if "username" in st.session_state: del st.session_state["username"]
@@ -18,7 +18,7 @@ def check_password():
             st.session_state["password_correct"] = False
 
     if "password_correct" not in st.session_state:
-        st.markdown("<div style='text-align: center; padding: 20px;'><h2 style='color: #1e3a8a;'>AAE Electro Mechanical Asset Portal</h2><p>AAE Electromechanical Asset Master Database</p></div>", unsafe_allow_html=True)
+        st.markdown("<div style='text-align: center; padding: 20px;'><h2 style='color: #1e3a8a;'>AA Electro Mechanical Asset Portal</h2><p>AA Electromechanical Asset Master Database</p></div>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1,2,1])
         with col2:
             st.text_input("Username", key="username")
@@ -37,16 +37,25 @@ def check_password():
 
 if check_password():
     AAE_STRUCTURE = {
-        "Electric Power Source(Generator)": ["Electric Utility", "Generator", "Solar Power System"],
-        "Electric Power Distribution": ["ATS", "Main Breaker", "Distribution Panel", "Power Cable", "Transformer"],
+        "Electric Power Source(Generator)": ["Electric Utility(transformer)", "Generator", "Solar Power System"],
+        "Electric Power Distribution": ["Main power Distribution Box", "Toll power distribution box", "Road light distribution box", "Power Cable 3*2.5mm", "Power Cable 4*16mm", "Power Cable 3*10mm", "Power Cable 2*1.5mm"],
         "UPS System": ["UPS Unit", "UPS Battery Bank", "Inverter"],
+        "Automatic Voltage Regulator": ["Automatic Voltage Regulator"],
         "CCTV System": ["Lane Camera", "Booth Camera", "Road Camera", "PTZ Camera", "NVR/Server"],
         "Auto-Railing System": ["Electrical Motor", "Barrier Controller/MRC board", "Loop Detector", "Arm"],
         "HVAC System": ["Air Conditioning Unit", "Ventilation Fan", "Chiller"],
-        "Illumination System": ["High Mast Light", "Road Light", "Booth Light", "Plaza Light", "Photocell Controller"],
-        "Electronic Display System": ["VMS", "LED Notice Board", "Money Fee Display", "Passage Signal Lamp", "Fog Light"],
+        "Illumination System": ["Florocent lamp", "Panel lamp", "High Mast Light pole", "Road Light pole", "Booth Light 11w", "Plaza Light 250w", "Photocell Controller", "road light led 150w", "compund light 45w", "compound Light pole", "Compound light Globe type cover", "Highh mast light(800w)"],
+        "Electronic Display System": ["VMS", "LED Notice Board", "Money Fee Display", "Passage Signal Lamp", "Fog Light", "Canopy Light"],
         "Pump System": ["Surface Water Pump", "Submersible Pump", "Fire Pump", "Pump Controller"],
-        "Overload System (WIM)": ["Weight-In-Motion Sensor", "WIM Controller", "Inductive Loop", "Charging Controller"]
+        "ITS/Step down transformer": ["Single phase step up transformer(3kva)"],
+        "ITS/Solar system": ["Solar panel 24 vdc 400w", "Solar charge controller 24vdc 20a", "Batteries bank 24vdc 260ah", "Batteries bank 24vdc 260ah", "Ductbank 2 tubes 110mm diameter 9octagonal(SUPPORT)"],
+        "ITS/Low voltage cables": ["1*4mm2  cable", "1*6mm2 cable", "1*10 mm2 cable", "1*16 mm2 cable", "1*25 mm2 cable", "1*35 mm2 cable", "1*50 mm2 cable", "1*70 mm2 cable", "1*95 mm2 cable", "1*150 mm2 cable", "cabinet low voltage masses earthing", "Earthing for pv solar system"],
+        "ITS/UPS": ["UPS(2.5KVA)", "UPS ONLINE 2CONV TRI-25KVA 60 MINUTES", "UPS ONLINE 2CONV TRI-30KVA 60 MINUTES", "UPS ONLINE 2CONV TRI-20KVA 60 MINUTES", "UPS ONLINE 2CONV TRI-10KVA 60 MINUTES"],
+        "ITS/low voltage swich board": ["Toll exit lane booth panel type 1", "Toll exit lane booth panel type 2", "Plaza  ancillary building panel", "Electrical cabinet", "Toll plaza main building panel", "Modjo etc point of sale(pos)panel", "Weight control building panel"],
+        "Overload System (WIM)": ["WIM"],
+        "Weather System (WS)": ["WS"],
+        "Variable Message Sign System (VIM)": ["VIM"],
+        "ITS/CCTV System": ["PTZ Camera", "Pole 10m", "Pole 15m"]
     }
 
     RCA_STANDARDS = {
@@ -115,12 +124,11 @@ if check_password():
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
         return df
 
-    st.set_page_config(page_title="AAE EMA Portal", layout="wide", page_icon="🟢")
+    st.set_page_config(page_title="AA EM Asset Portal", layout="wide",page_icon="🟢")
     
     # --- SIDEBAR LOGOS ---
     logo_url = "https://inquisitive-azure-n8rlqionj0.edgeone.app/asset.jpg"
     st.sidebar.image(logo_url, use_container_width=True)
-      # --- SIDEBAR LOGO ---
     logo_url = "https://physical-magenta-dzvxdrxnhh.edgeone.app/electrical.jpg"
     st.sidebar.image(logo_url, use_container_width=True)
 
@@ -138,7 +146,7 @@ if check_password():
         }
         </style>
         <div class="main-header">
-            <h1 style="margin:0; font-size: 24px;">AAE ELECTRO-MECHANICAL ASSET PORTAL</h1>
+            <h1 style="margin:0; font-size: 24px;">AA ELECTRO-MECHANICAL ASSET PORTAL</h1>
             <p style="margin:0; opacity: 0.9;">Strategic EM Asset Management & PM/RCA Dashboard</p>
         </div>
     """, unsafe_allow_html=True)
@@ -166,11 +174,21 @@ if check_password():
             elif total_val >= 1_000: display_val = f"{total_val/1_000:.1f}K Br"
             else: display_val = f"{total_val:,.0f} Br"
 
+            # --- CALCULATE PER-CATEGORY HEALTH FIRST ---
+            cat_health = df_inv.groupby(c_col).agg({q_col: 'sum', f_col: 'sum'}).reset_index()
+            cat_health['Category %'] = (cat_health[f_col] / cat_health[q_col] * 100).fillna(0)
+            
+            # --- NEW GLOBAL HEALTH INDEX CALCULATION ---
+            # Sum of all category percentages divided by number of categories
+            if len(cat_health) > 0:
+                global_health_idx = cat_health['Category %'].mean()
+            else:
+                global_health_idx = 0
+
             k1, k2, k3, k4, k5 = st.columns(5)
             k1.metric("💰 Portfolio Value", display_val, help=f"Exact Value: {total_val:,.2f} Br")
             k2.metric("📦 Active Assets", int(df_inv[q_col].sum()))
-            health_idx = (df_inv[f_col].sum() / df_inv[q_col].sum() * 100) if df_inv[q_col].sum() > 0 else 0
-            k3.metric("🏥 Health Index", f"{health_idx:.1f}%")
+            k3.metric("🏥 Health Index", f"{global_health_idx:.1f}%") # Updated Metric
             k4.metric("🛠️ Failures Logged", len(df_maint) if not df_maint.empty else 0)
             k5.metric("📅 PM Activities", len(df_prev) if not df_prev.empty else 0)
 
@@ -200,12 +218,10 @@ if check_password():
             col_h1, col_h2 = st.columns(2)
             with col_h1:
                 st.markdown("#### ⚡ System Health")
-                h_df = df_inv.groupby(c_col).agg({q_col: 'sum', f_col: 'sum'}).reset_index()
-                h_df['Health %'] = (h_df[f_col] / h_df[q_col] * 100).round(1).fillna(0)
-                # UPDATED: color=c_col gives each category bar its own distinct color
-                fig_bar = px.bar(h_df.sort_values('Health %'), x='Health %', y=c_col, orientation='h', text='Health %', color=c_col)
-                fig_bar.update_traces(texttemplate='%{text}%', textposition='outside')
-                fig_bar.update_layout(showlegend=False)
+                # Using the previously calculated cat_health for the chart
+                fig_bar = px.bar(cat_health.sort_values('Category %'), x='Category %', y=c_col, orientation='h', text='Category %', color=c_col)
+                fig_bar.update_traces(texttemplate='%{text:.1f}%', textposition='outside')
+                fig_bar.update_layout(showlegend=False, xaxis_title="Health % (Functional / Total Quantity)")
                 st.plotly_chart(fig_bar, use_container_width=True)
             with col_h2:
                 st.markdown("#### 💎 Valuation by Subsystem")
@@ -230,7 +246,6 @@ if check_password():
                 else: st.info("No failure logs.")
 
             with col_r2:
-                # --- UPDATED PM CHART: Grouped by Category with Activity Labels ---
                 if not df_prev.empty:
                     pm_data = df_prev.groupby(['Category', 'Task Performed']).size().reset_index(name='Count')
                     pm_cat_totals = df_prev.groupby('Category').size().reset_index(name='Total_PM')
@@ -298,6 +313,195 @@ if check_password():
         if st.button("💾 Sync Database"):
             inv_ws.update([edited_df.columns.values.tolist()] + edited_df.values.tolist())
             st.success("Database synced!"); st.rerun()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
